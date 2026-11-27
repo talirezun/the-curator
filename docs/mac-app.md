@@ -168,7 +168,7 @@ half, a quarter, and a small dot for *older than a week*. A menu item can carry 
 cannot carry is a *live* view, and a menu is frozen by macOS once it is open, so a ticking trace
 is not possible and was never attempted. How to read the strip is in
 [user-guide.md § Reading the save pulse](user-guide.md#reading-the-save-pulse); the marks are in
-[§ The recency dot](user-guide.md#the-recency-dot).
+[§ The recency dot](user-guide.md#the-freshness-dot-one-scale-everywhere).
 
 **Rows are grouped under a project header.** Each header reads `domain / project` where the
 domain holds more than one project and just the project's name where it does not — and the domain
@@ -496,9 +496,10 @@ it.
 ## Simple and Pro
 
 *Since v4.2.0.* The app opens in the **simple** view. The **Pro** switch on the left rail, directly
-above **Settings** (also **Settings › General › Pro mode**), shows every detail and control. It is
-free, it only reveals (no warning, cost or result is ever hidden in the simple view), it is saved on
-this Mac only, and today it changes the Context page's steps 4 and 5. The same switch is in the
+above **Settings** (also **Settings › General › Pro mode**), shows every detail and control, in tables. It is
+free, and no warning, cost or result is ever hidden in the simple view (since v4.3.0 the two are
+different layouts of the same data); it is saved on this Mac only, and today it changes the
+**Projects** page. The same switch is in the
 Windows app and the browser install. Full description:
 [user guide §7c](user-guide.md#7c-simple-and-pro).
 
@@ -562,7 +563,7 @@ costs. The reasoning behind each row is in
 |---|---|
 | Every wiki page, domain and summary | Paste your API key again |
 | Chat history and working state | Reconnect Personal Sync, if you use it |
-| Your Obsidian vault and graph settings | Press **Install for me** in Settings → MCP bridge, if you use it |
+| Your Obsidian vault and graph settings | Press **Install for me** (Projects → **Connect an agent**, or Settings → MCP bridge), if you use it |
 
 The one thing that must work is that **your existing wiki appears**. There is no
 importer and no conversion: the wiki is plain markdown, and pointing the app at

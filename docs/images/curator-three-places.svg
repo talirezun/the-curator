@@ -2,13 +2,13 @@
      aria-labelledby="curator-three-places-title curator-three-places-desc">
   <title id="curator-three-places-title">The three places — ask, knowledge, context</title>
   <desc id="curator-three-places-desc">
-    On the left, the icon rail: three entries, Chat, Domains and Context, with Sync and Settings
+    On the left, the icon rail: three entries, Chat, Domains and Projects, with Sync and Settings
     separated at the foot. There is no dividing line between the three. Each entry is joined to a
     column naming what it is for. Chat is "ask": one domain's wiki, and optionally one project's
     context. Domains is "knowledge": one subject at a time, and the column lists the domain page's
     six sections in order — Overview, Ingest, Pages with a Wiki, Context and All lens, Projects,
-    Shared Brain, and Wiki health. Context is the project layer: canonical documents, working
-    state and the capture meter. Two of the sections, Ingest and Shared Brain, are marked as
+    Shared Brain, and Wiki health. Projects is the project layer: one project at a time, its
+    header and one status sentence, then three tabs — Now, Agents and Starting kit. Two of the sections, Ingest and Shared Brain, are marked as
     having a second host: a full-page view still reachable one press from the section, the same
     panel rather than a copy of it. A caption at the foot reads: one panel, two hosts — the
     section and the full view are the same code, so they can never drift apart.
@@ -65,7 +65,7 @@
   <text class="cap" x="58" y="180" text-anchor="middle">DOMAINS</text>
 
   <rect class="slot" x="34" y="202" width="48" height="42" rx="9"/>
-  <text class="cap" x="58" y="260" text-anchor="middle">CONTEXT</text>
+  <text class="cap" x="58" y="260" text-anchor="middle">PROJECTS</text>
 
   <!-- the footer, separated by a gap and NOT by a line -->
   <rect class="slot" x="40" y="312" width="36" height="30" rx="8"/>
@@ -112,14 +112,14 @@
   <text class="sec" x="148" y="300">WIKI HEALTH</text>
   <text class="meta" x="300" y="300">broken links, orphans, duplicates</text>
 
-  <!-- ── COLUMN ③ CONTEXT ────────────────────────────────────────── -->
+  <!-- ── COLUMN ③ PROJECTS ────────────────────────────────────────── -->
   <path class="link" d="M96 223 C112 223 112 368 126 368"/>
   <rect class="card" x="130" y="324" width="606" height="96" rx="10"/>
-  <text class="h" x="148" y="350">Project context</text>
-  <text class="ask" x="286" y="349" fill="var(--accent-2)">CONTEXT</text>
-  <text class="meta" x="148" y="372">① the canonical documents · ② the working state your agents read and</text>
-  <text class="meta" x="148" y="387">write · ③ the knowledge it draws on — plus the capture meter, which</text>
-  <text class="meta" x="148" y="402">says whether sessions actually read and actually saved.</text>
+  <text class="h" x="148" y="350">Projects</text>
+  <text class="ask" x="230" y="349" fill="var(--accent-2)">CONTEXT</text>
+  <text class="meta" x="148" y="372">A notebook your agents share: they read it when they start, and write</text>
+  <text class="meta" x="148" y="387">in it when they stop. Tabs: Now (the last note) · Agents (who can open it)</text>
+  <text class="meta" x="148" y="402">· Starting kit (what every agent reads first). Pro adds History · Budget · Computers.</text>
 
   <text class="foot" x="20" y="452">One panel, two hosts: a section and its full view are the same code, so they cannot drift apart.</text>
   <text class="foot" x="20" y="472">Sync and Settings sit at the foot of the rail. There is no dividing line — three places need no grouping.</text>

@@ -72,7 +72,7 @@ order, and each one optional past the first:
 |---|---|---|
 | ① **Second brain** | Your reading, turned into a wiki that compounds with every source | Domains, Chat |
 | ② **Shared Brain** *(optional)* | The same wiki, written together with a team | a domain's Shared Brain section |
-| ③ **Agent memory** *(optional)* | What your agents read at the start of a session, and save as they work | Context |
+| ③ **Agent memory** *(optional)* | What your agents read at the start of a session, and save as they work | Projects |
 
 A local app that turns what you read into a compounding wiki, shares it with a cohort, and holds
 your projects' context — Documents, Memory and Knowledge — so any agent, in any harness,
@@ -212,9 +212,9 @@ once in six headless sessions — and without the hook, five of six save attempt
 named after the tool instead of calling it. Thirteen of the fourteen rows still read *not
 measured*, and say so.
 
-**A meter, so you can tell.** Project context now opens its Working-state step with one line —
-*"6 sessions in the last 30 days · 4 started with the context · 4 saved before stopping · 2 read and
-did not save"* — computed from a local, content-free log of which tools were called. In words, never
+**A meter, so you can tell.** A project's **History** tab (Pro) says it in one line —
+*"6 agent connections · 4 read this project at the start · 4 saved before stopping · 2 read and did
+not save"* — computed from a local, content-free log of which tools were called. In words, never
 a percentage. It reports and never blocks.
 
 **And the format is public.** [`docs/spec/working-state-v1.md`](docs/spec/working-state-v1.md) is
@@ -230,10 +230,11 @@ your sync credential — set it once in **Settings → Knowledge base → GitHub
 which shows only its last four characters back and offers a one-click **Test** against a named
 repository before you rely on it.
 
-**And a Setup check, so you don't have to remember the preconditions (v3.77.0–v4.2.0).** Context →
-a project → step ⑤ **Setup** checks, for that project on this computer, what several agent harnesses
+**And a Setup check, so you don't have to remember the preconditions (v3.77.0–v4.3.0).** Projects →
+a project → **Agents** checks, for that project on this computer, what several agent harnesses
 (the apps your agent runs in: Claude Code, Codex, Cursor, Antigravity…) and several computers need,
-one row per harness with its status and next step: each harness's MCP entry, both skills, the instruction block in
+one row per agent with one status (Ready · Needs you · Not connected) and its next step — and
+**+ Connect an agent** walks a new one through it in one flow: each harness's MCP entry, both skills, the instruction block in
 `CLAUDE.md` / `AGENTS.md`, a committed and pushed `.curator-project`, and a newer handoff waiting
 from another computer. Every problem is one line with its own fix button; nothing is written to your
 harnesses or your repository. It also says which route each thing travels by — **Personal Sync** for
@@ -241,7 +242,7 @@ handoffs, the brief and Documents; **the project's own git** for the instruction
 marker; **nothing** for MCP settings, skills and hooks, which are set up on each computer
 ([what travels how](docs/user-guide.md#what-travels-between-your-computers-and-how)).
 
-**Simple by default, Pro for every detail (v4.2.0):** one free switch on the rail that only reveals and never hides a warning, a cost or a result ([Simple and Pro](docs/user-guide.md#7c-simple-and-pro)).
+**Simple by default, Pro for every detail (v4.2.0; two layouts of one data model since v4.3.0):** one free switch on the rail; Simple answers in a sentence, Pro shows the full tables, and a warning, a cost or a result is never Pro-only ([Simple and Pro](docs/user-guide.md#7c-simple-and-pro)).
 
 ---
 
@@ -289,7 +290,7 @@ marker; **nothing** for MCP settings, skills and hooks, which are set up on each
 |---|---|
 | **Chat** | Ask across one domain's wiki — and, with a project pinned, its context as well. |
 | **Domains** | One subject at a time: its overview, its sources, its pages, its projects, its Shared Brain connections and its wiki health. |
-| **Context** | One project's canonical documents, the working state your agents read and write, and how often they actually did. |
+| **Projects** | One project at a time — a notebook your agents share: the note the last agent left (**Now**), the agents that can open it (**Agents**), and what every agent reads first (**Starting kit**). |
 
 Sync and Settings sit in the rail's footer. Ingest and Shared Brain are no longer rail entries —
 they are sections of the domain page they describe, and each full-page view is still one press
@@ -675,8 +676,7 @@ for your project, to paste into `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or your Cu
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/curator-agent-memory-dark.png">
-    <img src="docs/images/curator-agent-memory.png" alt="The Project context view for the demo project exhibit-site. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. The sidebar holds + New project and Refresh over ACTIVE · LAST 24 H — exhibit-site, &#x27;early-computing · 3 scopes&#x27;, a green dot and &#x27;8 min ago&#x27;, and &#x27;Claude Code + Antigravity · Carry fixed; en…&#x27; — and IDLE — lecture-series, no save yet. The main column reads YOUR AGENTS&#x27; BRAIN over Project context, a Copy agent instructions button and the breadcrumb early-computing / exhibit-site. An OVERVIEW card: DOCUMENTS 2 documents, MEMORY saved 8 min ago (claude-code), KNOWLEDGE 29 pages (2 weeks ago · 2 domains), AGENT CONNECTIONS 8 connections (last 5 days · log begins 20 Sep) and SESSION START ≈3.2k tokens · 1 reply. Step 1, Documents: Add from this computer, Add from GitHub, Write a document, Copy the drafting request and Suggest a reading plan over a closed row &#x27;The documents — 2 documents · 495 bytes · kept here · 1 read first · 1 on request&#x27;. Step 2, Memory: a closed Agent connections row (&#x27;8 connections in the last 5 days · 8 started with the context · 7 saved before stopping · 1 read and did not save&#x27;), the line &#x27;Saves by tool, last 7 days: Claude Code 4 · Antigravity 3&#x27;, and the Handoffs row open as a table — HANDOFF, WORKING ON, LAST SAVED, MACHINE, HARNESS, SIZE — with three rows, each ending in a trash icon: claude-code &#x27;Carry fixed; engine tab…&#x27; 8 min ago, demo-mac-4d3e2f (this machine), Claude Code · claude-opus-5-5, 1 KB; main &#x27;Checklist run once on…&#x27; 40 min ago, Antigravity · gemini-3-pro, 598 bytes; antigravity &#x27;All eleven captions do…&#x27; 1 day ago, Antigravity · gemini-3-pro, 582 bytes; then &#x27;3 handoffs · 3 saved copies&#x27;. Closed rows follow for The brief (104 words, with a pencil) and Journal · claude-code (3 saves · latest 8 min ago), and the heading of step 3, Knowledge." width="800">
+    <img src="docs/images/curator-projects-page.svg" alt="A wireframe of one project on the Projects page: a header with the project name, one status sentence — Claude Code saved a note 27 min ago on this Mac; Antigravity needs one step from you — and a Connect an agent button; tabs Now, Agents and Starting kit, with History, Budget and Computers added in Pro; the last note shown as text, one row per agent with one status each, and the starting kit with Brief, Documents, Knowledge and one bar saying it uses 3% of the agent&#x27;s memory." width="800">
   </picture><br>
   <em>Layer 3, on disk: which project, which handoff, which tool on which machine, and how long ago an agent last wrote it down — here two tools, Claude Code and Antigravity, working one project.</em>
 </p>

@@ -46,11 +46,14 @@ Nothing has been renumbered; only grouped.
 
 **CONTEXT — what a project gives an agent, and how it travels**
 
+> *A project is a notebook your agents share: they read it when they start, and write in it when
+> they stop.* The screen is **Projects** — [what it shows, tab by tab](#project-context--what-the-screen-shows).
+
 13b. [Working state — carrying context between sessions](#13b-working-state--carrying-context-between-sessions)
 13c. [Making capture real — the command, the hooks and the meter](#13c-making-capture-real--the-command-the-hooks-and-the-meter)
 13d. [Working with several agent tools and several computers — the setup checklist](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist)
     — start with **[What travels between your computers, and how](#what-travels-between-your-computers-and-how)**
-13e. [The Setup check in the app](#13e-the-setup-check-in-the-app)
+13e. [The Setup check in the app](#13e-the-setup-check-in-the-app) — the **Agents** tab
 15. [Sync across computers (Personal Sync)](#15-sync-across-computers)
 15b. [Shared Brain](#15b-shared-brain)
 
@@ -71,7 +74,7 @@ Nothing has been renumbered; only grouped.
 **Build a second brain from what you read, share it with a team, and give it to your agents.**
 One knowledge folder on your own computer holds all three, in this order: **Second brain**
 (Domains, Chat — your reading, turned into a wiki) → **Shared Brain** (optional — the same wiki,
-written with a team) → **Agent memory** (Context — optional — what your agents read and save).
+written with a team) → **Agent memory** (Projects — optional — what your agents read and save).
 The first works alone; the other two are there whenever you want them.
 
 **The Curator is the context engine.** It builds and keeps the context your work runs on — what you have read, where the work stands, and the documents a project is built against — as plain markdown files on your own computer, and carries all three across sessions, machines, AI tools and models.
@@ -767,7 +770,7 @@ The first time you open The Curator there is nothing to talk to yet, so a small 
 | Door | Lands you on | The steps you then get |
 |---|---|---|
 | **Build a second brain** | **Domains** | 1 · Add an AI key → 2 · Point at a wiki, or start one → 3 · Ingest your first source |
-| **Give your agents memory** | **Project context** | 1 · Point at a wiki, or start one → 2 · Start a project → 3 · Connect your agent → 4 · Add an AI key *(marked **Optional**, and on this door the body is the short one — "Needed for ingest and chat.")* |
+| **Give your agents memory** | **Projects** | 1 · Point at a wiki, or start one → 2 · Start a project → 3 · Connect your agent → 4 · Add an AI key *(marked **Optional**, and on this door the body is the short one — "Needed for ingest and chat.")* |
 
 **Why the second list does not start with a key.** The memory layer and the MCP bridge do not use a model at all — the bridge reads and writes markdown on your disk and never calls a provider, and it runs with the app closed. If you came here to give your agents memory you can create a domain, create a project, paste the marker line and be productive with no API key whatsoever. The panel used to tell you "nothing else works without a model", which was simply false for that path; step 1 now names what a key *is* for — ingest and chat — and says the rest works without one.
 
@@ -993,8 +996,8 @@ is macOS's own submenu arrow.*
 > planning reading); the **Documents** line; and the **"N of M saved"** capture bars, which turned
 > out to be counting MCP bridge *process ids*, not real agent sessions (see
 > [Agent connections](#the-meter-did-the-session-read-and-did-it-save), below). None of that
-> information disappeared — it still lives in [Project context](#7-finding-your-way-around), step ②
-> **Memory** and step ④ **Session start** — it simply is not drawn a second time in the menu bar.
+> information disappeared — it still lives on the [Projects page](#project-context--what-the-screen-shows),
+> in its **Now** and **Starting kit** tabs — it simply is not drawn a second time in the menu bar.
 
 ### How to read a row
 
@@ -1053,7 +1056,7 @@ Every Active or Idle row has a **submenu** — hover it and four items appear.
 
 | Item | What it does |
 |---|---|
-| **Open in The Curator** | Opens the app on Project context, at that project |
+| **Open in The Curator** | Opens the app on Projects, at that project |
 | **Copy resume prompt** | Puts a short **instruction** on your clipboard: paste it into a fresh agent session and it knows how to fetch this work-stream's state for itself |
 | **Copy handoff as Markdown** | Puts the **document itself** on your clipboard — your brief and the session handoff, in full |
 | **Reveal current.md in Finder** | Opens a Finder window with the handoff file selected |
@@ -1153,7 +1156,7 @@ never folded into it.
 **Hover the strip** and the tooltip gives you the legend plus everything the sentence had to leave
 out — how many work-streams were counted, how many older saves fall outside the window entirely, and
 the timestamp of the oldest save it can see. **Clicking the strip, or a tool's own strip in the
-submenu, opens Project context**, where the saves it counts are listed.
+submenu, opens Projects**, where the saves it counts are listed (Pro's **History** tab).
 
 **Only the agent's own recorded save time is ever counted** — never the file's timestamp on disk.
 That matters most on a second computer: file times get rewritten when Personal Sync checks files
@@ -1222,8 +1225,8 @@ flowchart TD
 > blocked. But since v3.74.0, when a save is about to replace a handoff whose last save came from a
 > **different** tool, The Curator first copies the replaced `current.md`, byte for byte, to
 > `previous.md` in that same scope-and-machine folder — before the new content is written. Open
-> **Project context → step ② → Working state** and, when a replaced handoff exists, you will see an
-> unfolded line — *"Previous handoff by \<tool\> · \<age\> — open"* — that opens the replaced text in
+> the note in the reader (**Projects → Now → Open the full note ›**) and, when a replaced handoff
+> exists, you will see a line — *"Previous handoff by \<tool\> · \<age\> — open"* — that opens the replaced text in
 > the right-side reader, labelled *"Replaced handoff — by \<tool\>"* and treated as recorded data to
 > verify, not instructions to follow. `previous.md` holds only the one most recent cross-tool
 > replacement — a second cross-tool save replaces it in turn — and a same-tool save never touches it
@@ -1232,7 +1235,7 @@ flowchart TD
 > **What is not lost either way.** The append-only journal survives a collision regardless — every
 > save writes a line carrying its own tool name, so the record of *what happened* is intact even when
 > the *current handoff* only holds whichever tool saved last. You can read the whole trail in
-> **Project context → step ② → Journal**.
+> the note's reader, or Pro's **Now** tab (*This work-stream's journal*).
 
 #### Scenario 2 — Two or three computers, one private GitHub repo
 
@@ -1272,7 +1275,7 @@ The Curator — Last save: ott · Claude Code · just now
 
 **`just now` means "within the last minute"** — anything under sixty seconds reads the same way, because a menu bar is not a stopwatch. Above that it steps through *N min · N hr · N days · N weeks*.
 
-For the full picture — including your brief's own age — **Open Project Context…** lands you on the overview card across the top of the page ([§7](#the-overviews-memory-tile-and-the-warnings-above-the-four-rows)).
+For the full picture — including your brief's own age — **Open Project Context…** opens the project on the Projects page, whose header sentence says who saved last and whose **Now** tab shows the note ([§7](#project-context--what-the-screen-shows)).
 
 > **What the widget can never tell you: whether you are saved *now*.** It knows when the last save happened, not whether anything has changed since. That is why the line reads **Last save**, and not *"you are saved"*.
 
@@ -1344,7 +1347,7 @@ Stated plainly rather than left for you to discover.
 | **"On, hide the Dock icon" does not hide the Dock icon.** | The macOS call that hides it has a *return* transition that is reported broken in exactly the way this would depend on, and it could not be tested here. So the app keeps your setting and does the safe half: menu bar icon on, Dock icon left alone |
 | **The only way to discover it is Settings.** | The app does not offer it to you when your agent memory starts filling up. That was designed and not built |
 | **The pulse does not re-time when you hover.** | The rows do; the strip is the picture from the last time the store was read |
-| **A row click opens the project, not the work-stream.** | You land on Project context at the right project, and pick the work-stream from the picker there — which is why the row's submenu offers to [put the work-stream on your clipboard](#what-a-row-can-do) instead |
+| **A row click opens the project, not the work-stream.** | You land on Projects at the right project, and pick the work-stream from **Earlier notes** or Pro's **History** there — which is why the row's submenu offers to [put the work-stream on your clipboard](#what-a-row-can-do) instead |
 | **The row and submenu structure has never been opened on a real Mac.** | That macOS draws a two-level submenu on a menu bar item at all (row › Other work-streams › actions), that the items appear where expected, and that **Copy** actually lands on the clipboard while the menu is dismissing, are all unproven here — Electron is not something the tests can run. The composing is executed and checked; the interaction is not |
 | **macOS 14 or later is assumed for the second line under each row.** | It needs 14.4. On an older macOS it may simply not draw — in which case the project, tool and age, which are on the *first* line, are still there. This degradation has not been observed |
 
@@ -1381,7 +1384,7 @@ to hover and wait to find out what something is:
 |---|---|---|---|
 | **Chat** | Chat | *ask* | Ask questions of one domain's wiki — and, with a project pinned, of that project's context as well. |
 | **Domains** | Domains | *knowledge* | One subject at a time: its overview, its sources, its pages, its projects, its Shared Brain connections and its wiki health. This is **Home**, and where a first launch opens. |
-| **Project context** | Context | *context* | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over MCP — the brief, the current handoff, and the journal of saves. The handoff and the journal are read-only here; the **brief** has an Edit, because it is yours. |
+| **Projects** | Projects | *context* | One project at a time — a notebook your agents share: they read it when they start, and write in it when they stop. Tabs **Now · Agents · Starting kit** (Pro adds **History · Budget · Computers**); see [Project context — what the screen shows](#project-context--what-the-screen-shows). It was **Project context** / *Context* until v4.3.0. |
 
 There is **no dividing line** any more. Three places do not need grouping, and the old line said
 "everything below this is advanced" about a screen half this app's users came for.
@@ -1397,15 +1400,15 @@ Then, at the **bottom of the rail**, separated by a gap:
 |---|---|---|
 | **☀/☾ theme toggle** | — | Switch between the dark and light themes. Also in **Settings → General → Appearance**, alongside a **text size** control — four steps from compact to largest, applied across the whole app and remembered in this browser. It scales the type, button and text-box labels included; control heights and icons deliberately stay put, so buttons don't grow into each other. |
 | **Sync** | Sync | Back your wiki up to a private GitHub repository. |
-| **Pro switch** *(v4.2.0)* | Pro | Show every detail and control, or the simple view. Directly above Settings, so it is on every screen; free, and it only reveals — see [§7c](#7c-simple-and-pro). |
+| **Pro switch** *(v4.2.0)* | Pro | The simple layout, or every detail and control in tables. Directly above Settings, so it is on every screen; free, and never hides a warning, a cost or a task — see [§7c](#7c-simple-and-pro). |
 | **Settings** | Settings | Keys, MCP bridge, scan limits, knowledge base folder, version. |
 
-One caption is shortened to fit the column — **Project context** reads
-*Context*. Hovering the rail icon still shows its full name, and that is also
-the name a screen reader announces.
+Hovering a rail icon shows its full name, and that is also the name a screen reader announces.
+(Until v4.3.0 one caption was shortened — **Project context** read *Context*; the place is now
+simply **Projects**.)
 
 > **The main column got wider in v3.54.0 — 900px to 1200px.** On a large
-> monitor, Ingest, Shared Brain, Project context and Settings used to sit in a
+> monitor, Ingest, Shared Brain, Projects and Settings used to sit in a
 > narrow strip with the rest of the window empty, while Chat filled it. They
 > now use the width, so cards and tables can sit side by side. **Paragraphs did
 > not get wider**: a run of prose still stops at about 66–68 characters, which
@@ -1470,7 +1473,7 @@ All three came from one long-time user's report, and each is worth stating
 because you may have built habits around the old behaviour:
 
 - **The icons now have names.** He could not tell the Shared Brain icon from
-  the Project context icon, and the upload arrow did not read as *Ingest*; he was
+  the Project context (now Projects) icon, and the upload arrow did not read as *Ingest*; he was
   hovering and waiting for tooltips. A tooltip costs a hover every time and
   does not exist at all for keyboard navigation, so the names are on screen.
 - **Ingest moved from fifth to second.** It was behind Shared Brain and Agent
@@ -1546,10 +1549,10 @@ team, and give it to your agents. See [What is this app?](#1-what-is-this-app).
 
 **The block shape is no longer Settings-only.** A heading, a short lede with its ⓘ at the end, a
 body, and a hairline before the next block — that is now a shared piece any screen can be built
-from, and [Project context](#project-context--what-the-screen-shows) is the first outside Settings to
-use it (*v3.55.0*). On that one screen the ⓘ panel runs the **full width of the column** rather
-than stopping at a paragraph measure, because the page is a dashboard and a help panel ending at
-half the width of the table under it looked like a mistake.
+from, and [Project context](#project-context--what-the-screen-shows) was the first outside Settings to
+use it (*v3.55.0*). Since v4.3.0 the Projects page is built from the newer [shared
+kit](#the-shared-kit-v430) instead, and each of its tabs opens with one sentence and a **How this
+works** door — the same ⓘ mechanism, with a word on it.
 
 ### Buttons — what the look tells you
 
@@ -1611,177 +1614,165 @@ The one-time "The Curator has a new look." notice and its **Use the previous int
 
 ### Project context — what the screen shows
 
-The **Context** rail item opens **Project context**: everything one project gives an agent, on one
-screen. It was called *Agent memory* through v3.61.1, then *Project context* from v3.62.0 — same
-screen, same files, renamed because it had stopped being only about memory.
+> **A project is a notebook your agents share: they read it when they start, and write in it when
+> they stop.**
 
-Most of it is **read-only** — agents write the handoffs and the journal over MCP and the app shows
-them. Three things are yours to change here: the **brief** (a pencil), a **document** you
-keep in The Curator rather than in a repository, and which documents are marked **read first**.
+That one sentence is the whole screen. The rail item is **Projects** *(v4.3.0; it was **Context**,
+and the page was titled **Project context**, from v3.62.0 to v4.2.x — same screen, same files on
+disk, same MCP tools)*. Pick a project in the sidebar and the page shows **one project**: a header
+with one status sentence, then a strip of tabs, each answering one question.
 
-Since v3.62.0 the page is numbered steps, read top to bottom, under an **overview card** — three
-through v3.66.0, four from v3.67.0 (step ④ **Session start**), and **five since v3.77.0**, which
-adds step ⑤ **Setup** ([§13e](#13e-the-setup-check-in-the-app)).
-**The overview card itself grew a fifth tile in v3.70.0, SESSION START, in tokens** — e.g. *"≈8.8k
-tokens · 1 reply"*, hidden until the measurement lands, carrying no bar of its own (a reading, not
-a share; the share lives in step ④'s own meter, one press away) — **and a sixth in v3.77.0,
-SETUP**: *N to fix*, *repository not set* or *ready*, with the tools and the number of computers
-under it (*"Antigravity · Claude Code · 2 computers"*), hidden until the check lands. The fourth tile, **CAPTURE**, was
-renamed **AGENT SESSIONS** in v3.70.0 and, since v3.74.0, is **AGENT CONNECTIONS** — see
-[the rename](#the-meter-did-the-session-read-and-did-it-save), below.
-**Since v3.64.2 that card is the same component the domain page draws its own OVERVIEW figures
-in** ([§7b](#7b-the-three-places--ask-knowledge-context)) — through v3.64.1 this page built its own
-separate three-cell strip. Both places open the same way: a card of readings *about* the screen,
-under one OVERVIEW caption with one info mark, and then the numbered sections — knowing where to
-look on one screen means knowing where to look on the other. The numbering is an argument rather
-than decoration: this is the order a session start reads in, so step ① is what the project tells an
-agent, step ② is what the last session left, and step ③ is what it can look things up in.
+![A wireframe of one project on the Projects page. At the top, the header: the domain's identity
+dot and "Work / my-app", the project's name, and one status sentence — "Claude Code saved a note
+27 min ago on this Mac. Antigravity needs one step from you." — with the one primary button
+"+ Connect an agent" and a "···" menu beside it. Under it the tab strip: Now, Agents and Starting
+kit drawn solid, then History, Budget and Computers drawn dashed, marked as the three tabs Pro adds.
+Below, one panel per Simple tab, each headed by its one sentence. Now shows the last note as
+readable text with its sections, a footer "Saved · Claude Code · this Mac · 27 min ago" with "Open
+the full note", a "Copy continue prompt" button and two Earlier notes. Agents shows three rows,
+each with one status chip — Claude Code Ready, Antigravity Needs you with Update, OpenCode Not
+connected with Continue — and a notice "14 files are only on this computer" with Sync now.
+Starting kit shows Brief with Edit, Documents ("9 · 2 always read, 7 when needed") with Add,
+Knowledge with Add a domain, and one bar: "The starting kit uses 3% of your agent's memory —
+plenty of room left". At the foot, the quiet line "More in Pro: every save in a table, the token
+budget, your computers. Turn on Pro".](images/curator-projects-page.svg)
 
-**As of v3.65.1 the three steps carry the names the maintainer's own testing settled on** —
-*Documents*, *Memory* and *Knowledge* — after production feedback on the previous release's screen
-called it *"five different styles fighting each other, no continuity, no logic."* The rename is
-copy only, not a new store: the words **foundations**, **working state**, **scope** and
-**journal** did not move on disk or in the MCP tools an agent calls — see
-[the vocabulary table](#the-word-on-screen-and-the-word-on-disk), just below, before the two get
-confusing.
+*The Projects page in wireframe, on synthetic data. In Simple the page is three tabs; Pro keeps
+those three, widens them into tables and adds three more. There are no numbered steps any more —
+the only numbers on the page are the connect checklist's, below.*
 
-![A wireframe of the Project context screen. A breadcrumb at the top carries the domain's own
-identity dot, the same colour that domain has in the Domains sidebar, in the Context sidebar and
-on every row below that names it. Under it, a six-tile overview card in two rows of three — the
-same component Domains uses — reading DOCUMENTS "3 documents · fresh", MEMORY "saved 14 min ago ·
-claude-code", KNOWLEDGE "455 pages · 3 days ago · 2 domains", AGENT CONNECTIONS "4 connections ·
-last 30 days", SESSION START "≈8.8k tokens · 1 reply" and SETUP "1 to fix · Claude Code · Cursor ·
-2 computers". The first three carry a freshness dot; the last three carry none — they are counts
-and measurements, not ages. Below it, five numbered steps separated by hairlines, each heading
-carrying only a numeral, a Title-case title and an ⓘ mark — no sentence beneath any of them — and
-each section's controls sitting in a head row beneath its heading, above its rows, aligned to the
-rows' own left edge. Step 1, Documents: the controls "Add from this computer", "Add from GitHub",
-"Write a document" and "Suggest a reading plan", then one open row, "The documents — 3 documents ·
-391 KB · mirrored · 2 read first", whose SIZE column carries a depth bar — a tinted bar behind each
-figure, anchored at the right, its length that document's share of the project's own total, shown
-plainly and never as an alarm. Step 2, Memory: four closed rows, each one instrument — Agent
-connections, Handoffs, The brief and Journal. Step 3, Knowledge: the control "+ Add a domain", then
-one row per domain this project draws on, each carrying that domain's own identity dot — here
-"projects — 391 pages · 3 days ago" — opening to a monospace panel of entities, concepts and
-summaries (each with its own depth bar against that domain's page count), the last-ingest age, two
-doors beneath it, Open in Domains and Ask this domain, and its own Remove; a second, closed row,
-"research — 64 pages · 5 months ago". Step 4, Session start: a head row with the Window, Reading
-budget and Your tool's share pickers, then the segmented meter — your window to scale, your tool's
-share hatched at the left, The Curator's own layers in one violet hue, and a dashed room the width
-of the reading budget — then three closed rows, Documents at start, What an agent receives and How
-an agent reaches this. Step 5, Setup: "checked 2 min ago" and Re-check in its head row; one to-fix
-line, unfolded, saying AGENTS.md has older Curator instructions so Cursor may not re-read on
-"continue", with its own Copy instructions and Reveal AGENTS.md buttons; the "+ Add a tool" picker;
-then three closed folds, each ending in a grey tag for how its contents travel between computers —
-Tools ("set up on each computer"), Repository on this computer ("project's git") and Computers
-("Personal Sync"). At the foot, "Top to bottom is the order a session start reads
-in".](images/curator-context-steps.svg)
+**The page, top to bottom:**
 
-*The shape of steps ① to ⑤, in wireframe rather than a photograph so it stays legible at any
-size: numbered steps, each explained only by the ⓘ beside its title — no lede sentence survives
-under a heading — and every live reading, from the overview's tiles down to a single Handoffs row,
-built from the same two components the rest of the app uses: the overview card and the monitor.
-**Documents are replaced whole; Memory supersedes, so each save replaces the
-last; Knowledge accumulates**, one row per domain the project draws on. A warning about a save is
-never behind a chevron — it stays on the page, unfolded, under the row it qualifies, and step ⑤'s
-to-fix lines follow the same rule. A domain is
-the same colour everywhere it is named on this screen — the breadcrumb, the sidebar's project rows
-and every Knowledge row — the same [identity dot](design-system-source.md#18-identity--one-palette-one-mapping-one-glyph-v3651) the Domains sidebar
-uses ([§10](#projects-inside-a-domain)). Step ⑤'s grey tags are deliberately colourless, so a
-travel tag never reads as a domain's identity colour ([§13e](#13e-the-setup-check-in-the-app)).*
+| Part | What it holds |
+|---|---|
+| **Header** | The domain's identity dot and *‹Domain› / ‹project›*, the project's name, and **one status sentence** composed from what is really on disk: *"Claude Code saved a note 27 min ago on this Mac. Antigravity needs one step from you."* — or, on a new project, *"No agent has saved here yet. Connect one to start."* |
+| **+ Connect an agent** | The one primary button. It opens the [connect flow](#connect-an-agent--one-flow) in the reader on the right |
+| **"···"** | **Copy agent instructions** (the block for the file your agent reads, [§13b](#making-sure-your-agent-actually-does-it)) and **Check again** |
+| **ⓘ** | What a project is, in a short panel, with the link to this section |
+| **Tabs** | **Now · Agents · Starting kit**; with Pro on, also **History · Budget · Computers**. Each tab opens with **its one sentence** and a **How this works** door to its explainer |
+| **One quiet line** *(Simple only)* | *"More in Pro: every save in a table, the token budget, your computers. Turn on Pro ›"* |
 
-*The wireframe predates v4.2.0: it draws steps ④ and ⑤ as **Pro** shows them, with their old words.
-Today the picker reads **+ Add an agent harness**, the first fold **Agent harnesses** and the share
-**Your harness's share**, and with Pro off ([§7c](#7c-simple-and-pro)) step ④ shows only the reading
-budget, the window bar and a four-line reading, and step ⑤ one row per agent harness.*
+**The tabs, and the question each one answers:**
 
-**What each step is for, and what it costs you to read:**
-
-| | Step | The question it answers | Cost to read it |
+| Tab | Its one sentence | Simple shows | Pro adds |
 |---|---|---|---|
-| ① | **Documents** | *What is this project built against, and which of it does an agent get automatically?* | A summary line. Open the fold for the table |
-| ② | **Memory** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows, one per fold — Agent connections, Handoffs, The brief, Journal. Open one to read it |
-| ③ | **Knowledge** | *What can an agent look things up in?* | One summary row per domain. Open a fold for its figures and its two doors |
-| ④ | **Session start** *(v3.67.0; a window meter since v3.70.0; a simple view since v4.2.0)* | *What does an agent actually receive when it starts work here, and how much of your context window does that use?* | The reading budget, the window bar to scale and a four-line reading. In Pro: the **Window** and **Your harness's share** pickers, the enlarged bar and the two full folds |
-| ⑤ | **Setup** *(v3.77.0; rebuilt v3.78.0–v3.80.0; a simple view since v4.2.0)* | *Can each of my agent harnesses actually reach this project from this computer — and what is left to fix?* | One row per agent harness, each with one status and one action; any warning about the whole project, never folded. In Pro: the to-fix lines on top and three closed folds — Agent harnesses, Repository on this computer, Computers ([§13e](#13e-the-setup-check-in-the-app)) |
+| **Now** | *Where the work stands — the note the last agent left.* | The latest handoff **as readable text**, with who saved it, on which computer and when; **Copy "continue" prompt**; **Earlier notes**; the connect checklist until the first save | A table of that note's facts (work-stream, harness, model, computer, size, file path) and **This work-stream's journal** |
+| **Agents** | *The agents that can open this project's notes.* | One row per agent: its name, one line, **one status** and at most one action; every warning; files not on GitHub yet, with **Sync now** | One table row per agent **per computer**: Connected · Skills · Instructions · Hooks · Last save · Saves 7 d — [§13e](#13e-the-setup-check-in-the-app) |
+| **Starting kit** | *What every agent reads before it does anything.* | **Brief** (Edit) · **Documents** (Add) · **Knowledge** (Add a domain), and **one bar**: *"The starting kit uses 3% of your agent's memory"* | The documents as a table — Document · Source · At start · Tokens · Updated — with every add door and **Suggest a reading plan** |
+| **History** *(Pro)* | *Every note any agent saved, in one table.* | — | When · Work-stream · Harness · Model · Headline · Computer · Size, with search and a Harness filter, and the agent-connections figures |
+| **Budget** *(Pro)* | *How much of the agent's window the starting kit takes.* | — | The window meter, the Window, Reading budget and harness-share pickers, a per-layer table, and **What an agent receives, in full ›** |
+| **Computers** *(Pro)* | *Which computers hold this project, and how each part reaches them.* | — | Every computer that saved here, this project's folder, files not sent yet, and the [three travel routes](#what-travels-between-your-computers-and-how) |
+
+**The status words are a closed list** — the same five everywhere the page names a state, each a
+shape, a word and a tone, never colour alone:
+
+| Status | Means |
+|---|---|
+| **Ready** | Nothing to do |
+| **Needs you** | One step from you — the row's button is that step |
+| **Not connected** | Not set up on this computer |
+| **Unknown** | The Curator could not check it here |
+| **Working** | A check is running |
+
+**Most of the page is read-only.** Agents write the notes (handoffs) and the journal over MCP; the
+app shows them. Yours to change here: the **brief**, the **documents** and their start state, the
+**domains** a project draws on, and — from the Agents tab — the setup of each agent. A note can be
+deleted ([Deleting a handoff](#deleting-a-handoff)); it cannot be edited.
+
+**The sidebar** lists your projects under **+ New project** (which opens Domains, where projects
+are created — [§10](#projects-inside-a-domain)). Each row is the domain's identity dot, the
+project's name, *"‹agent› · ‹age›"* and the headline of its newest note. With Pro on a row also
+counts its work-streams, and a **Filter projects…** field sits at the top. The screen opens on the
+project written to most recently, and every age on it keeps moving while you watch.
+
+#### Connect an agent — one flow
+
+*New in v4.3.0.* Connecting an
+agent used to be two places — Settings › MCP bridge for this computer, the Context page's step 5
+for the project. It is one flow now, started from a project, in the reader on the right:
+
+| Step | What happens |
+|---|---|
+| **1 · Pick the agent** | *"Which agent do you use?"* — one row per agent harness The Curator knows (Claude Code, Cursor, Codex, Antigravity…), each with its status here, plus a way to name another |
+| **2 · Connect it on this computer** | The Curator's MCP entry in the file that agent reads: **Install for me** where it can write it (with the preview of exactly what changes and a backup of the original — [§13](#connecting-your-tools-install-for-me-v3850)), or the entry to copy and paste. Once per computer, for every project |
+| **3 · Point it at this project** | The project part: the two skills, the agent instructions pasted into the file it reads, and its first save from this computer |
+
+Each part shows its outcome where you pressed. **Pick another agent** goes back to step 1. Settings
+› MCP bridge keeps its detail and now opens with a notice — *"Connect agents from a project now."* —
+whose **Open Projects** button brings you here.
+
+**Simple and Pro** ([§7c](#7c-simple-and-pro)) are two layouts of the same data. A warning, a cost,
+a refusal, a confirmation and the result of something you pressed are on screen in both; every task
+on this page — connect an agent, fix one, add a document, edit the brief, add a domain, sync, read a
+note — can be finished with Pro off.
 
 ### How to choose the right context
 
-**The governing idea behind steps ① and ④ is one sentence: the right context, not all of it.** At
-the start of a session an agent needs three things — its **foundations** (a few canonical
-documents marked **read first**: conventions, decisions, architecture — whatever this project is
-actually built against), the **last state** (the latest handoff — where the previous session
-stopped), and the **brief** (your instructions). Everything else stays one request away
-— **on request** — or out of the start entirely — **not at start** — and the agent opens it by
+**The governing idea behind the Starting kit is one sentence: the right context, not all of it.** At
+the start of a session an agent needs three things — its **documents** (a few canonical
+documents marked **Always read**: conventions, decisions, architecture — whatever this project is
+actually built against), the **last note** (the latest handoff — where the previous session
+stopped), and the **brief** (your instructions). Everything else stays one request away —
+**When needed** — or out of the start entirely — **Hidden** — and the agent opens it by
 name the moment the task actually needs it. **The wiki is never loaded at session start at all** —
 your compounded knowledge is *searched*, not handed over, whenever an agent needs to look
 something up.
 
-| Start state | Mark it when… | Example |
-|---|---|---|
-| **Read first** | An agent should not start work here without it, every session | `conventions.md`, `decisions.md`, `architecture.md` |
-| **On request** | It matters sometimes, and an agent can ask for it by name when the task touches it | `roadmap.md`, an old design doc, a one-off spec |
-| **Not at start** | It should be kept and mirrored, but never even listed at the start — name it in the brief's *"Read before you…"* if an agent should still find it | reference material, an archived proposal, a large appendix |
-| **Leave in the wiki** | It is compounded knowledge — searchable, cross-linked, growing with every ingest — not a canonical document at all | entities, concepts, summaries from Ingest |
+| Start state *(on screen since v4.3.0)* | Was called | Mark it when… | Example |
+|---|---|---|---|
+| **Always read** | read first | An agent should not start work here without it, every session | `conventions.md`, `decisions.md`, `architecture.md` |
+| **When needed** | on request | It matters sometimes, and an agent can ask for it by name when the task touches it | `roadmap.md`, an old design doc, a one-off spec |
+| **Hidden** | not at start | It should be kept and mirrored, but never even listed at the start — name it in the brief's *"Read before you…"* if an agent should still find it | reference material, an archived proposal, a large appendix |
+| *Leave in the wiki* | — | It is compounded knowledge — searchable, cross-linked, growing with every ingest — not a canonical document at all | entities, concepts, summaries from Ingest |
+
+The words on disk and in the MCP tools did not change (`read-first`, `on-request`,
+`not-at-start`; [the vocabulary table](#the-word-on-screen-and-the-word-on-disk)).
 
 **A short recipe, worked in curator-like numbers:**
 
-1. **Mark two or three documents read first.** Not twelve — the marked set is what every session
+1. **Mark two or three documents Always read.** Not twelve — the marked set is what every session
    pays for, and two or three is a reading plan; a dozen is the old behaviour with extra steps.
-2. **Pick Standard (16k tokens)** in step ④, unless you already know you need more or less.
-3. **Read the meter.** Say your window is 1M tokens (Claude in Claude Code) and you have set
-   **Your harness's share** *(Pro)* to Typical (≈50k). Step ④'s bar shows your harness's share hatched at the left, then The
-   Curator's own share — brief ≈1.2k, handoff ≈2.1k, journal ≈0.4k, index ≈0.3k, two read-first
-   documents ≈12k — for a session start of **≈16k tokens, about 1.6% of the window**. Aim for
-   **well under 10–15%** of the window on the meter; the hatched share reminds you that figure is
-   never the whole picture. If your share is higher, mark fewer documents read first or choose a
-   smaller preset.
+2. **Pick Standard (16k tokens)** as the reading budget (Pro's **Budget** tab), unless you already
+   know you need more or less. With Pro off the budget stays at what it is, and a budget that is not
+   the default is said in words under the Starting kit's bar.
+3. **Read the bar.** Say your window is 1M tokens (Claude in Claude Code). The Curator's part —
+   brief ≈1.2k, handoff ≈2.1k, journal ≈0.4k, index ≈0.3k, two always-read documents ≈12k — is a
+   session start of **≈16k tokens, about 1.6% of the window**, and the Starting kit says *"The
+   starting kit uses 2% of your agent's memory — plenty of room left"*. Aim for **well under
+   10–15%**. If it is higher, mark fewer documents Always read or choose a smaller budget.
 
 ### Session start and the context window
 
-**New in v3.67.0; rebuilt around a window meter in v3.70.0; a simple view since v4.2.0.** Session
-start is what an agent is handed the moment it starts work on this project: the brief, the latest
-handoff, a few journal lines, the list of documents, and the text of whichever documents are
-marked **read first** — up to a **reading budget**.
+**What an agent receives when it starts work on this project**: the brief, the latest handoff, a
+few journal lines, the list of documents, and the text of the documents marked **Always read** — up
+to a **reading budget**. *(Step ④ "Session start" from v3.67.0 to v4.2.x; since v4.3.0 the
+**Starting kit** tab says it in one bar and Pro's **Budget** tab holds the instrument.)*
 
-**What the step shows with Pro off (the default, [§7c](#7c-simple-and-pro)).** Four things, top to
-bottom:
+**With Pro off — one bar.** Under the Starting kit's three rows:
 
-1. **Reading budget** — the one picker in the head row, because it is this project's own setting
-   (the presets are below).
-2. **The window bar** — your context window to scale, with The Curator's part and what is left
-   free, and every note the meter has (a trimmed layer, a cut, **Set a reading budget** when the
-   start is large).
-3. **A four-line reading** — the **standing brief**, the **latest handoff**, **read first**, and
-   the **session start** in tokens with *"of a ‹window›"* and what is left free (*"≈197k free
-   before your harness's share"* while that share is not set — the note under the bar then says
-   so without naming a picker, since the picker is in Pro). Each figure sits beside its name, not
-   across the page. While a suggested
-   reading plan or budget is pending, the session-start line also carries its **if applied**
-   figure.
-4. **What an agent receives, in full ›** — opens every layer, sizes included, in the reader on
-   the right. Last, one quiet line: **More in Pro: the window and harness estimates, everything an
-   agent receives, how it reaches it ›**.
+> **The starting kit uses 3% of your agent's memory** — *plenty of room left*
 
-The **Documents at start** planner (below) is there in both views. **Pro adds** the **Window** and
-**Your harness's share** pickers to the head row, **The Curator's part, enlarged** with its legend,
-and the two folds **What an agent receives** and **How an agent reaches this**. The window and the
-share still shape the bar with Pro off: the meter draws them from their saved values (200K by
-default, no share until you set one).
+The qualifier is plain words, from the share of the window: under 10% *plenty of room left*, under
+30% *room left*, under 60% *a large share*, above that *most of the room*. A setting you changed in
+Pro (a window, a reading budget) is stated under the bar in words, so the bar never means something
+you cannot see. If the measurement fails, a notice says *"What an agent receives could not be
+measured."* with the reason.
 
-**The full meter (what Pro shows).** Step ④ draws the bootstrap as one bar: **your whole
-context window, to scale**, **your harness's share** at the left (what your agent harness loads for
-itself — hatched, since it is your estimate, never measured), then The Curator's own part — one violet shade per layer, each named on hover —
-and free space after it. A **dashed room** the width of your reading budget shows how much more
-The Curator is allowed to send before it would spill; whatever a reading budget does not use is
-free space too. Read-first and on-request documents beyond the room are labelled **"on demand —
-outside the window"**: they exist, but nothing sends them until an agent asks by name.
+**With Pro on — the Budget tab.**
 
-**Choose the reading budget in the step's head row, from seven presets, named in tokens:**
+| Part | What it holds |
+|---|---|
+| **The pickers** | **Window**, **Reading budget** and **your harness's share** (below) |
+| **The meter** | Your whole context window **to scale**: your harness's share at the left (hatched — it is your estimate, never measured), The Curator's own part, then free space; a **dashed room** the width of your reading budget. Documents beyond the room are labelled **"on demand — outside the window"**: they exist, but nothing sends them until an agent asks by name |
+| **What an agent receives at the start** | A table: Layer · Tokens · Size · Of the window |
+| **What an agent receives, in full ›** | Every layer, in the reader on the right |
+| **How an agent reaches this** | The tools and calls an agent uses to get it |
+
+**The reading budget — seven presets, named in tokens:**
 
 | Preset | Tokens (as the picker shows them) | Meaning |
 |---|---|---|
-| **Index only** | 0 | the list only; an agent opens documents by name. Step ① shows **"Index only — no document text at start"** in place of a bar |
+| **Index only** | 0 | the list only; an agent opens documents by name |
 | **Lean** | ≈8.2k (32 KB) | one or two short documents |
 | **Standard** *(recommended)* | ≈16.4k (64 KB) | a handful of core documents |
 | **Deep** | ≈32.8k (128 KB) | a design held in mind |
@@ -1789,459 +1780,222 @@ outside the window"**: they exist, but nothing sends them until an agent asks by
 | **Extra large** | ≈131k (512 KB) | a whole design set, 1M only |
 | **Max** | ≈205k (800 KB) | the ceiling — almost never right; offered for the rare 1M-window project that genuinely needs it |
 
-**One budget, one number (v3.76.0).** The picker used to name each preset in thousands of 1,024
-tokens (*"Extra large 128k"*) while the meter beside it drew the same budget as bytes ÷ 4 in
-thousands of 1,000 (*"≈131k"*). Both now use the meter's figure, so a preset reads the same in the
-picker, on the meter and in every "N tokens" line — the numbers above look less round because they
-are the true ones for the same byte budgets as before (nothing about the presets themselves
-changed).
-
 Each row in the picker states its own reading, e.g. *"an agent starts with ≈16k tokens · 1 MCP
-reply"*, and a row whose start would run over a quarter of your chosen window says so in words
-— it is never disabled, because you may know better than the meter does. **Hover a preset to
-preview it on the meter before you choose** — the bar repaints live, tagged *"Preview, not
-saved"*, and reverts the moment you close the menu without picking. **A project holding an older
-120 KB or 200 KB budget keeps it, unchanged, and reads as "Custom" with its nearest preset named**
-(*"Custom · ≈30.7k tokens, nearest Large"*) — nothing here rewrites a stored value.
+reply"*, and a row whose start would run over a quarter of your chosen window says so in words —
+it is never disabled, because you may know better than the meter does. Hover a preset to preview it
+on the meter (*"Preview, not saved"*). A project holding an older 120 KB or 200 KB budget keeps it
+and reads as "Custom" with its nearest preset named — nothing rewrites a stored value. **When
+nothing is marked Always read, every reading budget sends the same start**, and the tab says so in
+one line.
 
-**Documents at start (v3.70.1) — the per-document planner.** A fold under step ④, closed by
-default, lists every document in the project: its title, its role and size, and a three-way
-control for its start state — **read first**, **on request** or **not at start** — with its size
-drawn as a depth bar against the reading budget. Changing a state here saves nothing yet: the
-meter redraws as a live preview, marked *"Preview, not saved"*, with each read-first document
-drawn as its own segment and a count of how many MCP replies the start would take. Hovering a
-reading budget while changes are pending previews that budget together with them, so you can try a
-document and a budget together before committing to either. **Apply** saves every changed document
-at once, through the same setting step ① shows — step ① updates to match, and a document The
-Curator could not save stays listed with the reason; **Discard** returns to what is already saved.
-When a start would take more than one MCP reply, the enlarged bar marks where the second reply
-begins, and the legend names each document with the reply it arrives in.
-
-**Window and Your harness's share** *(Pro)* **sit beside the reading budget**, both set **per computer** (in the
-app's config file, not per browser), so the app and the menu bar widget always agree:
+**Window and your harness's share** are set **per computer** (in the app's config file), so the app
+and the menu bar widget always agree:
 
 - **Window** — 200K, 400K, 1M, or a custom size — the context window of the model you actually
-  run. Until you choose one **on this computer**, the picker reads **"200K · default"** and the
-  meter is labelled **"(default)"** — it is showing you a fallback, not a setting you made, and
-  no option in the menu is marked chosen.
-- **Your harness's share** *(Pro; called "Harness" until v3.79.0 and "Your tool's share" until
-  v4.2.0 — same setting, same field on disk; only the label changed)* — what your agent harness
-  loads for itself: its own system prompt, tool
+  run. Until you choose one on this computer the picker reads **"200K · default"**.
+- **Your harness's share** — what your agent harness loads for itself: its own system prompt, tool
   definitions, MCP tool lists, instruction files and skills. **Not set** by default, or **Light
-  ≈20k** (a simple agent: short system prompt, a few tools), **Typical ≈50k** (Claude Code,
-  Antigravity or Codex with an instruction file and 2–3 MCP servers), **Heavy ≈120k** (many MCP
-  servers or skills, or a long `CLAUDE.md` or `AGENTS.md`), or **Exact…** for the figure your tool
-  reports — in Claude Code, `/context` lists system prompt, tools, MCP tools, memory files and
-  skills separately; add them up. Every preset is stated as an **estimate**, never as measured.
-  The share is drawn **hatched** and labelled **"your estimate"** everywhere it appears, and it
-  is **never added to any measured figure** — The Curator only ever measures its own part. It
-  changes only the meter; nothing about it is ever sent anywhere.
-
-**When nothing is read first, every reading budget sends the same bootstrap**, and the step says
-so in one line — there is nothing yet for a bigger budget to spend itself on. Mark the documents
-an agent should never start without in step ①.
+  ≈20k**, **Typical ≈50k** (Claude Code, Antigravity or Codex with an instruction file and 2–3 MCP
+  servers), **Heavy ≈120k**, or **Exact…** for the figure your harness reports — in Claude Code,
+  `/context` lists system prompt, tools, MCP tools, memory files and skills separately; add them up.
+  Every preset is an **estimate**, drawn hatched and labelled **"your estimate"**, and it is **never
+  added to any measured figure** — The Curator only ever measures its own part. It changes only the
+  meter; nothing about it is ever sent anywhere.
 
 **Paged delivery (v3.70.0), and why.** Claude Code shows an MCP reply of at most ≈25,000 tokens
 and silently saves anything larger to a file, handing the agent a file reference instead of the
-text — so a large bootstrap that "fit" the old 120–200 KB ceiling was often never actually in the
-model's window. `get_project_context` now delivers a large bootstrap in **pages of at most ≈80 KB
-(≈20k tokens) each**, whole documents only, in reading order; page 1 always carries the brief, the
-handoff, the journal and the full document list. A reply that names a `continuation` is not the
-whole answer — **an agent must call again with that `page` number and keep going until there is no
-continuation left**, then record page 1's `seen` map as `foundations_read` on its next save. The
-Deep, Large, Extra large and Max presets, and any untouched project with roughly 75 KB or more of
-read-first documents, deliver in more than one reply; the picker's own row states how many.
+text. So `get_project_context` delivers a large start in **pages of at most ≈80 KB (≈20k tokens)
+each**, whole documents only, in reading order; page 1 always carries the brief, the handoff, the
+journal and the full document list. A reply that names a `continuation` is not the whole answer —
+**an agent must call again with that `page` number and keep going until there is no continuation
+left**, then record page 1's `seen` map as `foundations_read` on its next save.
 
 **Token estimate = bytes ÷ 4, always shown with "≈".** The Curator has no tokenizer for every
-model, so every figure on the meter, the picker and the widget is bytes divided by four, rounded.
-That estimate is usually within about ±20% for ordinary English prose; it reads **low** for dense
-code, JSON or tables, where real tokens run shorter than four characters each — so treat a code-
-heavy project's figure as a floor, not a ceiling.
+model, so every token figure is bytes divided by four, rounded. That estimate is usually within
+about ±20% for ordinary English prose; it reads **low** for dense code, JSON or tables, where real
+tokens run shorter than four characters each — so treat a code-heavy project's figure as a floor,
+not a ceiling.
 
-**The overview card is the "am I saved?" answer, in one line each.** It sits above step ① —
-DOCUMENTS, MEMORY and KNOWLEDGE, the same three nouns the steps use, each with its figure,
-the qualifier under it and a freshness mark **and** the word beside it, because the colour never
-carries a reading on its own. Press a card and the page goes to the step that owns it — **they are
-readings, not a filter: nothing narrows when you press one**, which is the one difference from the
-same card's use on a domain page, where the figures also filter the page list beneath them.
-AGENT CONNECTIONS joins the card's row as a fourth door once the connections reading described
-[below](#the-meter-did-the-session-read-and-did-it-save) has landed, **SESSION START joins as a
-fifth, in tokens**, once step ④'s own measurement lands — a reading with no bar of its own, since
-the share it stands for lives in the meter, one press away — and **SETUP joins as a sixth** once
-step ⑤'s check lands: *N to fix*, *repository not set* (the repository checks have not run yet) or
-*ready*, a count of real to-fix lines and never a score.
-An unknown age is drawn as a **dashed ring** and the words *nothing written yet* / *no documents
-yet* / *nothing ingested yet* — never as age zero, which would read as *just now*. While a project's
-own read is still in flight the first card is **left out** rather than filled with a guess; you get
-two readings for a moment instead of a wrong third. The card replaced a *Status* block that had
-become the problem it was meant to solve: a tier-0 reading, a tier-2 reading, four warnings and a
-tier-1 line under one heading called *Status*. The warnings did not go with it — each moved to the
-step it qualifies, where **warnings, costs, refusals and outcomes are never folded**.
+**Sizes divide by 1,024 everywhere (v4.3.0).** One formatter now writes every size, count and age
+in the app: a kilobyte is 1,024 bytes on every screen (a few screens used 1,000 before, so a figure
+there can read slightly smaller than in an earlier release), "N bytes" under 1 KB, one decimal under
+10 KB or 10 MB, whole numbers above.
+
+**Pro's tile strip.** With Pro on, the header gains six tiles — **Last save · Agents · Saves (last
+7 days) · Documents · Knowledge · Starting kit** — the same overview card the domain page uses. They
+are readings, not a filter: nothing narrows when you press one.
 
 #### The word on screen and the word on disk
 
-Renaming the screen's own nouns (v3.65.1) did not rename anything an agent reads or writes, or
-anything on disk — a rename in the app's copy would be a poor reason to break every existing
-`.curator-project` file, MCP call and synced `state/` folder in the wild. Read **Documents** on
-screen and **foundations** in this chapter, or **Memory** on screen and **working state** in an
-MCP tool's own description, and they are the same thing:
+Renaming the screen's words never renamed anything an agent reads or writes, or anything on disk —
+a rename in the app's copy would be a poor reason to break every existing `.curator-project` file,
+MCP call and synced `state/` folder. Read **Documents** on screen and **foundations** in an MCP tool,
+or **note** on screen and **handoff** in this chapter, and they are the same thing:
 
-| On screen (v3.65.1) | On disk / in the store | In an MCP tool |
-|---|---|---|
-| **Documents** (step ①) | the `foundations/` folder, `manifest.json` | `get_project_context`, `save_foundation` |
-| **Memory** (step ②, the feature as a whole) | `state/` — tiers 2 and 3 together | `get_working_state`, `save_working_state` |
-| **Handoffs** (a row inside Memory) | one `<project>/<scope>/<machine>/current.md` per row | the `scope` argument; the response's `current` field |
-| **Journal** (a row inside Memory) | `<project>/<scope>/<machine>/journal.jsonl` | the response's `journal` field |
-| **Knowledge** (step ③) | the domain(s) a project draws on — curator metadata, not a tier | `knowledgeDomains` on the wire |
-| **Domain** (everywhere) | `domains/<domain>/` | the `domain` argument |
+| On screen (v4.3.0) | Earlier on screen | On disk / in the store | In an MCP tool |
+|---|---|---|---|
+| **Projects** (the rail) | Context, Project context, Agent memory | `domains/<domain>/state/<project>/` | the `project` argument |
+| **Agent** (headings) · **Harness** (Pro columns) | agent harness, tool | the `harness` field of a save | the `harness` argument |
+| **Note** · **Handoff** (labels) | Handoff | `<project>/<scope>/<machine>/current.md` | the response's `current` field |
+| **Work-stream** *(Pro only; hidden in Simple)* | scope | the `<scope>/` folder | the `scope` argument |
+| **Journal** | Journal | `<project>/<scope>/<machine>/journal.jsonl` | the response's `journal` field |
+| **Starting kit** | Session start | what `get_project_context` returns at the start | `get_project_context` |
+| **Brief** | The brief, standing brief | `<project>/project.md` | `save_project_brief`, the response's `brief` |
+| **Documents** | Documents, Foundations | the `foundations/` folder, `manifest.json` | `get_project_context`, `save_foundation` |
+| **Always read · When needed · Hidden** | read first · on request · not at start | `read-first` · `on-request` · `not-at-start` | the `atStart` field |
+| **Knowledge** | Knowledge | the domain(s) a project draws on — curator metadata, not a tier | `knowledgeDomains` on the wire |
+| **Domain** | Domain | `domains/<domain>/` | the `domain` argument |
 
-So a tool description that still says *"work-stream"* or a file still named `journal.jsonl` is not
-a place this release missed — those names are the public contract (**[the on-disk
+So a tool description that says *"work-stream"* or a file still named `journal.jsonl` is not a
+place a release missed — those names are the public contract (**[the on-disk
 spec](spec/working-state-v1.md)**, every MCP tool's argument), and changing them would be changing
 what a synced folder means, not what a screen says.
 
-**Every fold ships closed, and stays how you leave it.** That is v3.58.0's measurement applied to
-the whole page: on this repository's own `curator` project at a 1370px window, the page was
-**3,241px** and the standing brief alone was 2,100px of it; closed, the same page measures
-**1,278px**. Each summary line carries the figure that decides whether to open it. Whichever you
-open stays open for the next visit, per browser; a private window simply forgets, and they come
-back closed.
+#### The tabs, in detail
 
-**A missing thing is never folded away.** On a fresh project, step ① renders **unfolded** with its
-two Add doors open — it is that step's job — and step ② renders one flat card saying nothing has
-been saved and whether there is a brief. A new project therefore shows a screen with something to
-*do* on it rather than three closed chevrons.
+##### Now — where the work stands
 
-Reading one work-stream's handoff is a separate act, and since v3.56.0 it happens in the
-**[reader](#reading-a-handoff)** — the same right-hand panel a wiki page opens in, over a page that
-stays where it was.
+**The latest note is on the page, as text** *(v4.3.0 — before, it was a closed row you opened in
+the reader)*. A card headed **Where the work stands** — *"The note the last agent left. The next
+agent you open reads this first."* — shows the handoff's headline as its title and its sections
+(*Where things stand*, *Next steps*, …) as they are in the file, rendered as Markdown. Under it, a
+footer: **Saved · ‹agent› · ‹computer› · ‹age›**, **Open the full note ›** (the [reader](#reading-a-handoff),
+with every chip and warning) and **Delete…** ([Deleting a handoff](#deleting-a-handoff)).
 
-![The Project context view for the demo project exhibit-site. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. The sidebar holds + New project and Refresh over ACTIVE · LAST 24 H — exhibit-site, 'early-computing · 3 scopes', a green dot and '8 min ago', and 'Claude Code + Antigravity · Carry fixed; en…' — and IDLE — lecture-series, no save yet. The main column reads YOUR AGENTS' BRAIN over Project context, a Copy agent instructions button and the breadcrumb early-computing / exhibit-site. An OVERVIEW card: DOCUMENTS 2 documents, MEMORY saved 8 min ago (claude-code), KNOWLEDGE 29 pages (2 weeks ago · 2 domains), AGENT CONNECTIONS 8 connections (last 5 days · log begins 20 Sep) and SESSION START ≈3.2k tokens · 1 reply. Step 1, Documents: Add from this computer, Add from GitHub, Write a document, Copy the drafting request and Suggest a reading plan over a closed row 'The documents — 2 documents · 495 bytes · kept here · 1 read first · 1 on request'. Step 2, Memory: a closed Agent connections row ('8 connections in the last 5 days · 8 started with the context · 7 saved before stopping · 1 read and did not save'), the line 'Saves by tool, last 7 days: Claude Code 4 · Antigravity 3', and the Handoffs row open as a table — HANDOFF, WORKING ON, LAST SAVED, MACHINE, HARNESS, SIZE — with three rows, each ending in a trash icon: claude-code 'Carry fixed; engine tab…' 8 min ago, demo-mac-4d3e2f (this machine), Claude Code · claude-opus-5-5, 1 KB; main 'Checklist run once on…' 40 min ago, Antigravity · gemini-3-pro, 598 bytes; antigravity 'All eleven captions do…' 1 day ago, Antigravity · gemini-3-pro, 582 bytes; then '3 handoffs · 3 saved copies'. Closed rows follow for The brief (104 words, with a pencil) and Journal · claude-code (3 saves · latest 8 min ago), and the heading of step 3, Knowledge.](images/curator-agent-memory.png)
+**Copy "continue" prompt** puts one short instruction on your clipboard, filled in for this
+project:
 
-*One project's state on the demo workspace, with the **Handoffs** row open — one handoff per tool plus a shared `main` scope, each row ending in its trash control. Every reading below
-is still on the page — the
-[three steps table](#7-finding-your-way-around) above says where each one now
-lives. **Status** was the block's own headline before v3.64.1 folded it into the
-"am I saved?" in one glance — the **Working on** headline, a live age, the Last-saved reading, and
-here one qualifying line: this handoff was written on another machine. **Work-streams** — now
-**Handoffs** — is the
-table that replaced the old Work-stream and Machine dropdowns: one row per saved copy, newest
-first, press a row to read its handoff. It paints the newest **five** of this project's eighteen,
-with **Show 13 more** under it and the count line tracking both figures. Its dots are the app-wide
-[freshness scale](#the-freshness-dot-one-scale-everywhere), and because the table is ordered by the
-same clock the dots are cut on, they cool straight down the column: green for the one saved minutes
-ago, amber for the two saved today, filled grey for the two a few days out. The tinted first row,
-with an accent bar down its left edge, is the one whose handoff is open. **Standing brief** and
-**Session journal** are closed by default (v3.58.0) — a one-line summary and a pencil, not a
-document printed on the page; opening one is a click, not a scroll.*
+> *Load the project context for "my-app" in the "work" domain from The Curator
+> (get_project_context), read the latest handoff, and continue where the last agent left off.*
 
-> **One project, one clock.** An earlier build of this screen could show a sidebar row naming a
-> fortnight-old work-stream beside a Status block reporting a save three hours ago, because the row
-> took its headline and age from whichever copy the *filesystem* had touched most recently while
-> every age on the page is the **agent's** own clock — and on a synced store those are different
-> things, since git rewrites file times on checkout. The row now speaks for the same pair the page
-> does. (Fixed in v3.55.0; an earlier edition of this guide, and its screenshot, showed the
-> disagreement.)
+Paste it into any connected agent — a new conversation, another harness, another computer after
+**Sync now** — and it picks the work up from the note above.
 
-- **The sidebar lists your projects, grouped by domain** — domains in domain order, projects
-  nested under their domain. Each row now carries three things: the project name, the **Working
-  on** headline from its newest save (omitted, not filled with a dash, when there is none), and a
-  status line of a **freshness dot** plus the work-stream count and age (*"13 scopes · 2 weeks
-  ago"*). A project that has a brief but has never been saved to is listed — dimmed, with
-  a hollow marker, reading *"no state saved yet"* — because that is a real answer, not a broken
-  row. A domain with **neither** a brief nor a save is not listed at all. If nothing at all is
-  listed, the screen says which of the two situations you are in — *no domains*, or domains with
-  no agent memory yet — and never sends you off to create a domain you already have. The screen
-  **opens** on whichever project was written to most recently, and it remembers the last project
-  you looked at in each domain; the lists themselves do not reorder between visits.
-- **The ages keep moving, and so does the grouping (v3.76.0).** The sidebar is grouped **Active ·
-  last 24 h** and **Idle**. Every age on this screen — each sidebar row, the **MEMORY** tile, the
-  Handoffs summary — is worked out from the save's timestamp every second while the page is open,
-  rather than read once from the last answer the app fetched, so coming back to the screen never
-  shows an hour-old *"2 min ago"*. The freshness dots re-colour as they age, and a project moves
-  from **Active** to **Idle** by itself the moment its newest save turns 24 hours old. An Active
-  row names **every tool that saved into the project in the last 24 hours**, read from the
-  project's journal — so when a second tool's save replaced the first tool's handoff, both are
-  still named (*"Claude Code + Antigravity"*), not just the one whose copy is on disk now.
-- **The header carries `Copy agent instructions`**, beside the title. It is the same block as the
-  button of that name in [§10 → Projects](#projects-inside-a-domain), already filled in for this
-  project — the thing to paste into the file your coding tool loads every session, so the agent
-  knows to read this screen's state when it starts and to save it as it goes
-  ([§13b](#making-sure-your-agent-actually-does-it)). **Refresh** sits at the top of the sidebar's
-  PROJECTS list; the screen re-checks by itself when you come back to it, so it is rarely needed.
-- **A domain that had memory before v3.48.0 shows one project named after the domain.** Nothing
-  was moved to produce that — see [§13b](#one-domain-one-project-or-one-more-work-stream) for
-  the model and [§10](#projects-inside-a-domain) for how to add a second project.
-- **"How this works" is the ⓘ beside the title.** It explains the three tiers, the per-machine
-  layout and the read-only rule — read once, then never again, which is exactly what the ⓘ is for.
-  As of v3.55.0 that panel runs the full width of the column like everything under it, because
-  this page is a dashboard rather than a page of prose (**since v3.65.0, every ⓘ panel in the app
-  runs the full width of its column** — the previous release had one stopping at about two-thirds).
-  **As of v3.65.1 the sidebar carries no ⓘ of its own** — the short version it used to hold moved
-  into the header's, which already said the same thing once, not twice.
+**Earlier notes** lists the next few handoffs, one row each (headline, then *agent · computer ·
+age*); a row opens that note in the reader. Pro adds, under the note, a small table of its facts —
+work-stream, harness, model, computer, size and the file's path — and **This work-stream's
+journal** (When · Harness · Model · Headline).
 
-#### The three steps, in detail
+**Until the first save, Now is a checklist** — the only numbered list on the page:
 
-*(The page was five unnumbered blocks through v3.61.1 — rebuilt in v3.55.0 from three collapsible
-panels and a row of dropdowns; **Current handoff** became the reader in v3.56.0; **Foundations**
-joined in v3.59.0. v3.62.0 numbered what was left, deleted the **Status** block and moved its
-readings into the strip. v3.65.1 renamed the steps and their rows — see
-[the table above](#the-word-on-screen-and-the-word-on-disk) — and rebuilt each step's controls into
-a head row above its rows, the same anatomy Wiki health's AI help panel already used.)*
+| # | Step | Its button |
+|---|---|---|
+| ✓ | **Create the project** | — (done: you are looking at it) |
+| 2 | **Connect an agent** — *"Pick Claude Code, Cursor, Codex… The Curator sets it up and shows what it changed."* | **Connect** — the [connect flow](#connect-an-agent--one-flow) |
+| 3 | **Tell it about this project** — *"One paste into your project's instruction file."* | **Copy agent instructions** |
+| 4 | **Open your agent and say "save where we are"** — *"The first note appears here."* | — |
 
-*This part covers steps ① to ③. Step ④ has its own section above,
-[Session start and the context window](#session-start-and-the-context-window); step ⑤ has its own
-chapter, [§13e, The Setup check in the app](#13e-the-setup-check-in-the-app).*
+A step is ticked only from what is really on disk: step 2 when an agent is connected on this
+computer, step 3 when an instruction file carries the block. The checklist leaves by itself when the
+first note arrives.
 
-##### Documents — what the project tells an agent
+**Above the note, the notices** — every warning about the last save, never folded; see [The notices
+above the note](#the-notices-above-the-note).
+
+##### Agents — who can open this notebook
+
+One row per agent harness on this project, each with **one status** (Ready · Needs you · Not
+connected), at most **one action**, and a row that opens that agent's setup steps in the reader. The
+full chapter — the rows, the four setup steps, every check and what Pro's table adds — is
+[§13e, The Setup check in the app](#13e-the-setup-check-in-the-app).
+
+##### Starting kit — what every agent reads first
+
+Three rows and one bar ([the bar is above](#session-start-and-the-context-window)):
+
+| Row | Its line | Its button |
+|---|---|---|
+| **Brief** | *"Your standing instructions for every agent · 3,038 words"*, or *"Not written yet — your standing instructions for every agent."* | **Edit** — the brief editor ([Editing the standing brief](#editing-the-standing-brief)) |
+| **Documents** | *"9 documents · 2 always read, 7 when needed"* (and *N hidden* when there are any), or *"No documents yet — add the ones every agent should know."* | **Add** — the add doors below |
+| **Knowledge** | The domains this project draws on, with their identity dots and pages | **Add a domain** — [Knowledge](#knowledge--which-domains-a-project-draws-on) |
+
+A read-only Shared Brain mirror shows the rows without their buttons. Pro shows the documents as a
+table — **Document · Source · At start · Tokens · Updated**, the **At start** cell a picker of
+**Always read / When needed / Hidden** — with the add doors and **Suggest a reading plan** under it.
+
+###### Documents — what the project tells an agent
 
 **The documents this project is built against, kept word for word.** Architecture, firm
 decisions, conventions, a roadmap — the things a competent new contributor reads *before* touching
 anything. They are **replaced whole** and read **verbatim**: an agent gets the document, not a
-paraphrase of it. → [§13b, Foundations](#documents--the-files-that-travel-with-a-project) for how
-documents get in and what a document's own source means — the store and that chapter still call
-this tier **foundations**; see [the table above](#the-word-on-screen-and-the-word-on-disk).
+paraphrase of it. → [§13b, Documents](#documents--the-files-that-travel-with-a-project) for how
+documents get in — the store and the MCP tools still call this tier **foundations**.
 
-**As of v3.69.0, one project can hold documents from several places at once** — written here,
-copied in from a folder, and mirrored from any number of folders and GitHub repositories (up to
-8 sources, any mix). The source is recorded per **document**, not per project, so there is nothing
-to choose up front and nothing that ever locks a project to one place.
+**One project can hold documents from several places at once** (v3.69.0) — written here, copied in
+from a folder, and mirrored from any number of folders and GitHub repositories (up to 8 sources,
+any mix). The source is recorded per **document**, not per project, so nothing ever locks a project
+to one place.
 
 | Document kind | Written by | Edited here? | What Refresh does | What Delete does |
 |---|---|---|---|---|
 | **Written** | You, or an agent you asked | Yes, in the app's editor | Nothing — there is no source copy to re-read | Removes it. Cannot be undone from inside the app |
 | **Copied** | A one-time copy from a folder | Yes — editing it makes it "written by you" from then on | Nothing — it does not track the folder | Removes the copy only; the original file is untouched |
-| **Folder mirror** | A folder you keep in sync | No — the pencil is withheld; edit the file, then refresh | Re-reads the file from the folder and copies over anything changed | Removes this project's copy only; the file in your folder is untouched, and a refresh will not bring it back — re-add it from the checklist if you want it again |
-| **GitHub mirror** | A GitHub repository you keep in sync | No — edit it on GitHub, then refresh | Re-reads the file from the repository and copies over anything changed | Removes this project's copy only; the file on GitHub is untouched, and a refresh will not bring it back — re-add it from the checklist if you want it again |
+| **Folder mirror** | A folder you keep in sync | No — edit the file, then refresh | Re-reads the file from the folder and copies over anything changed | Removes this project's copy only; the file in your folder is untouched |
+| **GitHub mirror** | A GitHub repository you keep in sync | No — edit it on GitHub, then refresh | Re-reads the file from the repository and copies over anything changed | Removes this project's copy only; the file on GitHub is untouched |
 
-Deleting a source's *last* document removes that source from the project in the same action —
-there is no separate "remove this source" control, and no orphaned, document-less source is left
-behind.
+**The add doors** — **Add from this computer**, **Add from GitHub**, **Write a document** — are always enabled,
+at zero documents and at any number; adding always **appends**, never replaces. Add from this
+computer offers **Keep in sync** (a folder mirror) or **Copy once**; Add from GitHub always mirrors.
+Either door lists every candidate (path, size, age) with a live count of ticks and bytes against the
+project's 200 KB budget; a file over 512 KB is shown but never tickable; a name already taken lands
+under a readable suffix (*"lands as ‹name›"*). There is **no token field**: a GitHub mirror reads
+with the read-only token you saved in [Settings → Knowledge base](#github-read-only-token-v3652) or
+Personal Sync's. A refusal, a partial add or a rate limit stays on the panel until your next action.
 
-**The head row above the table always offers two doors: Add from this computer and Add from
-GitHub** — at zero documents and at any number, and both are always enabled. Pressing either opens
-the same checklist panel under the head row. A **sources strip** under the head row lists every
-source this project draws from (once it has one), each with its own **Refresh**; a strip-level
-**Refresh all** refreshes every source under one lock — sources are read first, a source that
-fails is named and left exactly as it was, and the others still refresh, then the manifest is
-written once. **Until a project holds its first document the step also offers a quiet "Or start
-from four templates to fill."**
+**Freshness.** A GitHub-mirrored document reads **"GitHub · not checked"** until you press Refresh
+(it is compared only then, never on an ordinary read); a folder mirror set up on another computer
+reads **"source not here"**, and pressing the word says what to do.
 
-**One project, several sources — an example.** A `lumina` project can keep `notes.md` written
-here, mirror `architecture.md` and `decisions.md` from your `second-brain` checkout (kept in
-sync), and mirror `roadmap.md` from a teammate's `acme/lumina-planning` GitHub repository — three
-sources, three kinds of document, one project. Adding a file from your checkout whose name would
-collide with one already mirrored from GitHub does not overwrite it — the new one lands as, say,
-`architecture-lumina-planning.md`, named after its source, and the checklist marks it "lands as
-&lt;name&gt;" before you confirm.
-
-The fold's summary line is the decision to open it — *"3 documents · 391 KB · mirrored · 2 read
-first · 1 on request · fresh"*. Inside, one row per document — its role, size, session-start
-state, and (as of v3.69.0) its **Source** and **Freshness** in a project that mixes kept and
-mirrored documents, or a single **State** column in a project with only one kind, plus a pencil
-(kept documents only) and a trash icon on every row. Pressing the pencil opens the editor; pressing
-anywhere else on the row opens the document in the reader. **As of v3.65.1 the Size column carries
-a depth bar** — a tinted bar behind each figure, anchored at the right edge of the cell, its length
-that document's share of the 200 KB project budget; a single document over the budget on its own
-fills the whole cell in the warning colour. The bar is a second way to *see* the same fact the
-total-over-budget warning under the table already states in words — a cost is never only a colour
-on this screen, so the words stay even where the bar makes it obvious at a glance.
-
-**The table scrolls sideways on a narrow window**, so on a phone-width window the table scrolls
-inside its own card rather than the page scrolling — the honest cost of putting each row's own
-controls in the row they belong to.
-
-**Both doors are always enabled, on every project, since v3.69.0.** Neither door is a commitment
-and neither can be "wrong" for the project — a project simply grows another source.
-
-| This project | Add from this computer | Add from GitHub |
-|---|---|---|
-| No documents yet | Copies or mirrors files in, your choice | Mirrors from the repository you name |
-| Already has documents | Adds more, from the same folder or a new one, **appended** — never replaces what is already there | Adds more, from the same repository or a new one, **appended** |
-
-Adding from this computer offers **Keep in sync** (a folder mirror; the default when the folder
-you named is itself inside a git checkout) or **Copy once** (a one-time copy; the default
-otherwise) — both options are always shown, and you choose per add, not once per project. Adding
-from GitHub always mirrors; there is no copy-once option there, because a GitHub file has nothing
-local to copy from. A name already taken by another source lands under a readable suffix rather
-than overwriting it — the checklist shows **"lands as &lt;name&gt;"** before you confirm.
-
-As with every mirror, there is **no token field on either panel**: you name which file on this
-computer the read-only token is read from — **config**, or **sync** (Personal Sync's token) —
-never paste one here. A per-source Refresh, or "Read from GitHub instead" for a source you add
-later, reuses the token that source was first added with.
-
-**A document's SOURCE reading tells you why it isn't fresh, in one of two different ways (since
-v3.67.2).** A document mirrored from GitHub reads **"GitHub · not checked"** — freshness there is
-compared only when you press Refresh, never on an ordinary read, so this is not a warning, just an
-honest "nobody has asked yet." A document mirrored from a folder that genuinely is not on this
-computer — a mirror set up on another machine — reads **"source not here"**, now a pressable word
-(or a disabled Refresh/Add control beside it) that explains itself and what to do about it when you
-press it, rather than a floating note that used to say so and then vanish.
-
-**READ WITH now tells you the truth, and gives you a door if there is nothing to tell (v3.65.2).**
-Through v3.65.1 the radio's **config** option always claimed *"the read-only token in Settings"* —
-which did not exist yet, so the row was a promise nothing could fulfil. It now reads the real
-status: with a token saved, *"The read-only token in Settings → Knowledge base · ends in
-…ab12"*; with none, *"No read-only token yet"* and a button, **Add one in Settings**, that opens
-Settings on the Knowledge base section directly — the Find and Mirror controls stay disabled until
-one exists, each stating that reason where the control would be. The ⓘ beside READ WITH carries
-the same five steps for creating a fine-grained, read-only token as
-[Settings → Knowledge base](#github-read-only-token-v3652) — see that section for the full box. →
-[the API reference](api-reference.md#post-apimemorydomainprojectfoundationssource) for the request this
-button sends and every way it can refuse.
-
-**The checklist panel, either door (v3.68.0).** Add from this computer asks for a folder (or a
-typed full path); Add from GitHub asks for `owner/repo`, and optionally a branch and a folder
-inside it. Either way, pressing **List documents** scans and shows every candidate: its path, its
-size, and how long ago it changed. A document already in the project is shown **ticked and
-disabled**, with an "already added" badge — there is nothing to add, it is already there. A file
-over 512 KB is shown disabled with its size — a canonical document cannot be honestly trimmed, so
-it is never tickable. A **live count line** runs under the list — ticks and bytes, and what the
-project's total would become against its 200 KB budget — with a warning, in words, once the total
-would go over. The button at the foot reads **"Add N documents"** (this computer) or **"Mirror N
-documents"** (GitHub), counting only what you ticked, and commits the moment you press it. A clean
-commit closes the panel and shows a toast; a refusal, a partial add (each refused file listed with
-its reason), a GitHub error or a rate limit stays on the panel until your next action — never a
-toast, because it still blocks you. **Adding always appends — it never replaces** a document that
-is already there.
-
-A one-line legend sits above the table, spelling out what each start state costs: **read first** —
-sent in full at session start, and counts against the reading budget; **on request** — listed by
-name, opened only when needed, no budget cost; **not at start** — hidden at the start, opened by
-name only.
-
-**A document copied in from a folder is labelled "copied from `<folder>`"** — never "written by
-you" — everywhere its provenance shows: the table row, the fold's own summary and the overview
-tile, and the chips in the reader. A document you write with **Write a document** or that arrived
-from a template still says **"written by you"**; editing a copied document in the app's own editor
-makes it yours from then on, so it becomes "written by you" too. **Add from this computer
-remembers the last folder you added from, for that project, until you quit the app** — the field
-is prefilled and its contents listed straight away the next time you open the door, so adding a
-second batch from the same place is one press instead of typing the path again; nothing is saved
-past that session.
-
-**The `read first` control is the one that changes what your agents get** (*new in v3.62.0*). A
-project with four documents can hand an agent all four at the start of every session. A project
-with twenty cannot — and until v3.62.0 it tried, which meant a session opened with twenty documents
-most of which had nothing to do with the work in front of it, and the reading budget started
-dropping documents nobody had chosen to drop.
-
-So you choose:
-
-| Marked | What an agent gets at the start of a session |
-|---|---|
-| **read first** | The document's **full text**, every session |
-| not marked | An **index row** — its title, role, size and freshness — and the document itself the moment the agent asks for it by name |
-
-The summary counts both — *"2 read first · 4 on request"* — and if the marked set grows past what
-one session's reading budget can carry, the block says so rather than quietly dropping the tail.
-**As of v3.65.0 that warning carries an action, not just a number:** a "Choose documents" button
-opens the documents row and scrolls to the READ column, so deciding what to un-mark happens on the
-spot rather than requiring you to go find the table yourself. **Being "on request" is not being
-hidden:** the agent is told the document exists and what it is about, and the tools tell it in as
-many words that an index row with no text is *a document waiting to be asked for, not one that is
-missing*.
-
-**Marking works on a mirrored document too**, which is worth knowing because mirroring a repository
-is the commonest way documents arrive. The mark lives in The Curator's own index, never in the
-document, so your checkout's files are untouched and a refresh still compares them byte for byte —
-and the mark **survives the refresh**, because the repository owns the text and you own the reading
-order.
+**The start state is the control that changes what your agents get.** **Always read** — the full
+text, every session, counted against the reading budget; **When needed** — listed by name, opened
+only when the agent asks, no budget cost; **Hidden** — not even listed at the start, opened by name
+only. **Being "When needed" is not being hidden:** the agent is told the document exists and what it
+is about. The mark lives in The Curator's own index, never in the document, so it works on a
+mirrored document too and **survives a refresh**. If the Always-read set grows past what the reading
+budget can carry, a notice says so rather than quietly dropping the tail.
 
 **Which document for which kind of work is a sentence, not a checkbox** — so it goes in your
-brief, under a heading the template now offers: **"Read before you…"**. One line per kind
-of work, naming the document to open. An agent is told to consult it; when it is empty, the
-document roles are the next best signal. → [§13b](#one-standing-brief-many-scopes--how-the-brief-and-your-workstreams-relate) for what else the brief
-carries.
-
-##### Memory — what the last session left
-
-**Four closed rows, in this order: Agent connections, Handoffs, The brief, Journal.** This layer
-**supersedes** — every save replaces the last, so a blocker you fixed on Tuesday cannot reappear on
-Wednesday. **Every row's body is the same recessed, monospace instrument** (v3.65.0) — one fact per
-line, key left, reading right — used everywhere a live reading appears in the app: every row here,
-and every knowledge row in step ③.
-
-**"Last saved" was a fifth row through v3.65.0 and is removed in v3.65.1** — the maintainer's own
-reading of the screen was that a whole row answering *"is this saved?"* duplicated what the MEMORY
-tile in the overview already says, one scroll up. Its fact did not disappear: the age lives in the
-overview's **MEMORY** tile, and *which* handoff it was lives in the **Handoffs** row's own summary —
-one clock, told once each in the two places that need it, instead of a third.
-
-| Row | Summary line | Whose it is |
-|---|---|---|
-| **Agent connections** | *1 connection in the last 30 days · 1 saved before stopping*, five monitor lines inside — see [the meter](#the-meter-did-the-session-read-and-did-it-save), below | Your agents'. No table — the body is the monitor only |
-| **Handoffs** | *3 handoffs · saved 14 min ago* — the age keeps moving while the page is open (since v3.76.0; it used to hold the figure from the last repaint) | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-handoffs-table) |
-| **The brief** | *written 14 min ago · 126 words*, with a **pencil**. *Since v3.76.0* the age is the brief's **own** stamp (the time written into its header when it was saved), not the file's date, so a restore or a pull no longer makes an old brief read new; when the file on disk changed later — you edited it by hand, or sync brought a copy — a second clock follows, *"· changed on disk 2 hr ago"*. A brief you typed by hand with no stamp reads *"file changed …"* | Yours — see [Editing the standing brief](#editing-the-standing-brief) |
-| **Journal** | *17 saves · showing 10 · latest 14 min ago* | Your agents'. One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded. A **"Show N more"** row extends it in place — the same control the Handoffs table uses, not a separate footer card |
-
-**Agent connections leads now that Last saved is gone** — it already sat directly under that row, so nothing
-about the reading order changed, only what used to be above it. Handoffs follows, because the
-question a returning session actually opens with is *what did the last one leave*. The brief comes
-next, because it is the one tier a human owns and an agent reads it on every single call. The
-journal is last because it is **history, not the present**: any entry in it may since have been
-superseded — a blocker named in an old headline may have been fixed three saves ago — and the
-current handoff is what is true now.
-
-**Everything that qualifies this step is above the folds and never folds itself** — v3.16.1's rule,
-unmoved by the "Last saved" row's removal: content that had to be trimmed, a label that was
-shortened while the handoff itself saved in full, a save that deliberately replaced a larger one,
-two tools sharing one handoff file, newer state in a different scope, another machine that saved
-*after* this one, a save that landed since you opened the page (with a **Reload**), and state on
-disk this read could not list. **What is *not* here any more, as of v3.65.1:** which clock an age
-came from, and that the open handoff was written on another machine and synced here — both were
-genuine facts, not warnings, and a step's body is rows with an ⓘ, never a block of provenance
-sitting above them. Which clock is explained once in the overview's own ⓘ; which machine is now the
-Handoffs table's own **MACHINE** column, per row, and the same fact rides as a chip
-(`synced from another machine`) when you open that handoff in the reader.
+brief, under **"Read before you…"**: one line per kind of work, naming the document to open.
+→ [§13b](#one-standing-brief-many-scopes--how-the-brief-and-your-workstreams-relate).
 
 #### Memory — the brief, Handoffs and the Journal
 
 **Memory is where the last session stopped, plus your standing instructions — the brief, the
-Handoffs and the Journal, in one place.** *State supersedes*: every save replaces the one before
+Handoffs and the Journal.** On the Projects page they live in two tabs: the **Now** tab holds the
+latest handoff (the note) and the earlier ones, the **Starting kit** holds the brief, and Pro's
+**History** tab lists every saved note. *State supersedes*: every save replaces the one before
 it rather than being merged into it, because a blocker you fixed has to be able to stop being
 true, and a store that only added to itself could never say so.
 
-- **The brief is yours.** You write it, agents read it on every call and, unless you ask one to,
-  never write it. See [Editing the standing brief](#editing-the-standing-brief).
-- **A Handoff is what one session leaves the next**, one per piece of work. **Each computer keeps
-  its own** — that is what makes two machines safe to sync: no two of them ever touch one file, so
-  a piece of work can appear as more than one saved copy, one per machine that worked on it. A
-  Handoff written on another machine says so, and its next steps are worth reading against your own
-  checkout before you act on them. Two agent harnesses sharing one machine and one piece of work is the
-  one case this cannot separate — they overwrite each other's Handoff, and the step says so when the
-  Journal shows it; the fix is to give each tool its own.
-- **The Journal is one line per save, and it only grows.** Because it accumulates rather than
-  replacing itself, an old line can describe something already resolved — read it as history, not
-  as the present. Each line's own summary is capped at 200 characters; a cut summary is a shorter
-  label, never lost work.
-- **Agent connections** (named **Agent sessions** through v3.73.x) counts agents that connected
-  through the MCP tools — a connection is **one bridge process**, from the moment an agent connects
-  to the moment its window closes, identified by an id the bridge mints for itself, so two
-  connections are never merged and one is never split in two. **It is a process count, not a
-  conversation count, and the rename exists to say so**: Claude Code starts a fresh bridge process
-  per session, so there one connection is one conversation, but Claude Desktop keeps a single
-  process open across many conversations — so a Claude Desktop process that served thirty different
-  chats used to read as *"1 of 1 sessions"*, which looked like a complete account of your day and
-  was not one. It "started with the context" when it asked for this project's brief, Handoff or
-  Documents at any point before it saved anything, and it "saved before stopping" when a save
-  actually succeeded. What this cannot see: a save made from the command line, a hook, or by hand in
-  a text editor is a real save and still does not count here, because only calls that came through
-  the bridge do — so this reading is about agent connections that used The Curator, never a claim
-  about your whole week. The harness name beside a connection is self-reported by the tool that sent
-  it, normalised since v3.74.0 to one canonical spelling per tool so "Claude Code" and "claude-code"
-  read as one tool rather than two; nothing in the app behaves differently because of it. It comes from a file
-  beside your settings, never inside your knowledge folder, so it is never synced, and it never names
-  an argument, a result or a file path. This reading only reports — it never stops, delays or warns a
-  connection. **When there is nothing to report, the tile says why, not "0 connections"**: it reads
-  **"no usage log"** if this computer has no MCP usage log at all, and **"not logged"** if saves
-  exist but no connection was recorded for them; the sub-line only appears once a count was actually
-  taken, and it names the window **the log actually covers rather than a fixed 30 days** — *"6
-  connections in the last 30 days"* when the log reaches back that far, or *"6 connections in the
-  last 5 days (the log begins 20 Sep)"* when it does not, since v3.74.0 (D5). The count refreshes
-  when you reopen a project and about once a minute while you're watching it, so switching between
-  projects always shows a fresh reading rather than one cached from earlier in the visit.
+| Word | What it is | Where you see it |
+|---|---|---|
+| **Brief** | Your standing instructions. You write it; agents read it on every call and, unless you ask one to, never write it | Starting kit › **Brief** › **Edit** ([Editing the standing brief](#editing-the-standing-brief)) |
+| **Handoff** (the note) | What one session leaves the next, one per piece of work | **Now** (the latest, as text) · **Earlier notes** · **History** *(Pro)* |
+| **Journal** | One line per save; it only grows | **Now** in Pro (*This work-stream's journal*) · the reader |
+| **Agent connections** | How many agents connected over the MCP, and whether they read and saved | **History** *(Pro)*, as a figure row |
+
+- **Each computer keeps its own handoff** — that is what makes two machines safe to sync: no two of
+  them ever touch one file, so a piece of work can appear as more than one saved copy, one per
+  machine that worked on it. A Handoff written on another machine says so, and its next steps are
+  worth reading against your own checkout before you act on them. Two agent harnesses sharing one
+  machine and one piece of work is the one case this cannot separate — they overwrite each other's
+  Handoff, and the Now tab says so when the Journal shows it; the fix is to give each agent its own
+  work-stream.
+- **The Journal only grows.** Because it accumulates rather than replacing itself, an old line can
+  describe something already resolved — read it as history, not as the present. Each line's own
+  summary is capped at 200 characters; a cut summary is a shorter label, never lost work.
+- **Agent connections** counts agents that connected through the MCP tools — a connection is **one
+  bridge process**, from the moment an agent connects to the moment its window closes. **It is a
+  process count, not a conversation count**: Claude Code starts a fresh bridge process per session,
+  so there one connection is one conversation, but Claude Desktop keeps a single process open across
+  many conversations. A connection "read this project at the start" when it asked for this project's
+  brief, handoff or documents before it saved anything, and "saved before stopping" when a save
+  actually succeeded. A save made from the command line, a hook, or by hand is a real save and still
+  does not count here, because only calls that came through the bridge do. The figures come from a
+  content-free usage log beside your settings, never inside your knowledge folder, so it is never
+  synced. Pro's **History** tab says them in one row — *"11 agent connections · 7 read this project
+  at the start · 11 saved before stopping"* — beside **Saves by harness** for the last 7 days
+  ([§13c](#the-meter-did-the-session-read-and-did-it-save)).
 
 ##### How to organise your work-streams (scopes)
 
@@ -2259,9 +2013,9 @@ whether to keep one handoff or start new ones?** See [the first question below](
 | On screen | On disk | What it is | How many |
 |---|---|---|---|
 | **The brief** | `state/<project>/project.md` | Your standing instructions for the project. Every scope reads the same brief | **One per project**, shared by all scopes and all machines |
-| **Scope** (a row's name in **Handoffs**) | the `<scope>/` folder | The name of one thread of work — `main`, `auth-refactor`, `session-2026-09-25-docs` | As many as you name. A save that names none goes to its tool's own scope (`claude-code`, `antigravity`) — or to `main` when it names no tool either |
-| **Machine** (the **Machine** column) | the `<machine>/` folder inside a scope | The computer — strictly, the installation of The Curator — that saved it. Recorded for you; an agent cannot choose it | One per computer that has saved under that scope |
-| **Handoff** (a row in **Handoffs**) | `<scope>/<machine>/current.md` | Where that thread stood at its last save on that computer | **One per project × scope × machine** |
+| **Work-stream** *(Pro: the History column; hidden in Simple)* · `scope` in the store | the `<scope>/` folder | The name of one thread of work — `main`, `auth-refactor`, `session-2026-09-25-docs` | As many as you name. A save that names none goes to its tool's own scope (`claude-code`, `antigravity`) — or to `main` when it names no tool either |
+| **Computer** (the **Computer** column in History) | the `<machine>/` folder inside a scope | The computer — strictly, the installation of The Curator — that saved it. Recorded for you; an agent cannot choose it | One per computer that has saved under that scope |
+| **Handoff** (the note on **Now**; a row in **Earlier notes** and **History**) | `<scope>/<machine>/current.md` | Where that thread stood at its last save on that computer | **One per project × scope × machine** |
 | **Journal** | `<scope>/<machine>/journal.jsonl`, beside the handoff | One line per save — when, which tool, which model, the headline. Only grows | One per handoff |
 
 ```mermaid
@@ -2277,7 +2031,7 @@ flowchart TD
     M3 --> H3["current.md — the handoff<br/>journal.jsonl — the Journal"]
 ```
 
-*Three handoffs, three rows in the **Handoffs** table: `main` on the laptop, `main` on the desktop,
+*Three handoffs, three rows in Pro's **History** table: `main` on the laptop, `main` on the desktop,
 `auth-refactor` on the laptop. The brief sits above all of them.*
 
 **What a save does, in four lines** — checked against the store, not paraphrased from memory:
@@ -2285,7 +2039,7 @@ flowchart TD
 | You save… | What happens |
 |---|---|
 | Under a scope that already has a handoff **on this computer** | That handoff is **overwritten** — replaced, not merged. One line is added to its Journal |
-| Under a **new** scope name | A new handoff is **created** — a new row in **Handoffs** |
+| Under a **new** scope name | A new handoff is **created** — a new row in **History** |
 | Under the same scope **on another computer** | That computer gets **its own copy** beside the first; neither ever touches the other's file |
 | From **two agent harnesses on one computer**, same scope | They write the **same file** and overwrite each other — there is no tool name in the path. See [the pattern for this](#several-agent-tools-on-one-computer) |
 
@@ -2297,7 +2051,7 @@ was recorded at all — and the reply names which one it opened — you never sa
 **scopes are created by saving and by nothing
 else** — an agent's `save_working_state`, or `my-curator save --scope <name>` from a terminal. There
 is no rename control: to retire a scope, stop saving under it and its dot goes hollow
-(*dormant*); to remove one, use the trash on its row in **Handoffs** ([Deleting a
+(*dormant*); to remove one, use **Delete…** on its note ([Deleting a
 handoff](#deleting-a-handoff), v3.75.0) — it goes to The Curator's trash, not away for good. A name is
 tidied into a safe folder name as it saves — lower-case, `feature/auth` becomes `feature-auth`, at
 most 64 characters — and the save says so when it changed.
@@ -2326,8 +2080,8 @@ Journal keeps one line per save, never the full text.
 
 **One scope per session.** This is how The Curator's own repository is worked. Every session opens
 the newest handoff (`latest`), reads where the last one stopped, and saves under a fresh name, so
-yesterday's handoff is still there tomorrow. The cost is a longer **Handoffs** table; it shows the
-newest five and **Show N more** extends it. Name the topic, not just the date — the name is what you
+yesterday's handoff is still there tomorrow. The cost is a longer **History** table *(Pro)*; with Pro off, **Earlier notes** shows the few
+newest. Name the topic, not just the date — the name is what you
 scan for a fortnight later.
 
 **One scope per work-stream.** Right when threads genuinely run side by side: three features of one
@@ -2339,7 +2093,7 @@ scope, automatically, so two computers can never overwrite each other. An agent 
 without naming a machine gets the **newest** copy — ordered by the agent's own recorded save time
 first, and only by the file's timestamp on this disk when no agent time was recorded at all — and a
 list of the others. A copy from
-elsewhere is marked — the **Machine** column names it, the reader shows a
+elsewhere is marked — the note's footer and History's **Computer** column name it, the reader shows a
 **synced from another machine** chip, and the agent's read carries `machineIsThisMachine: false`,
 which tells it to say so and to check the next steps against *this* checkout before acting. Two habits make it work: press
 **Sync now** (in **Sync**, [§15](#15-sync-across-computers)) **before you start** and **after your
@@ -2357,7 +2111,7 @@ new conversation after syncing.
 the machine folder cannot separate: two tools on one computer are the same machine, so if they save
 under the same scope, each save replaces the other's. Nothing refuses or prevents that save. The app
 only notices **afterwards**, from the Journal, and only once the two tools have taken turns — one,
-the other, the first again: then step ② says so in red, *"Two tools are writing `<scope>`… Give
+the other, the first again: then the **Now** tab says so in a red notice, *"Two tools are writing `<scope>`… Give
 each tool its own handoff."* A single switch from one tool to another is treated as a move, not a
 clash, and is not flagged. So give each tool its own scope from the start. **Since v3.76.0, Copy agent
 instructions asks for exactly that:** as copied, it tells each tool to save under a scope named for
@@ -2367,7 +2121,7 @@ told every tool to save under `main`, which *was* this collision.) And since v3.
 names its tool lands in that tool's scope, not `main`. **Check it took:** measured on 2026-09-25
 (Claude Code), Sonnet 5 saved in its own scope in 8 of 8 runs, but the small Haiku 4.5 did so in
 only 3 of its 5 saves — the other 2 named `main` outright. So after each tool's first save, look at
-**Handoffs**: one row per tool is right; one `main` row
+**History** *(Pro)*: one row per tool is right; one `main` row
 written by both means add the brief line above. Three things make separate scopes hold in practice:
 
 - **An open conversation re-reads only when told to.** It does not see the other tool's saves on
@@ -2395,9 +2149,8 @@ you are never blocked from saving. But when a save is about to
 replace a handoff whose last save came from a genuinely **different** tool (matched by normalised
 tool identity, so `Claude Code` and `claude-code` count as the same tool and this never fires on a
 spelling difference alone), The Curator first copies the replaced `current.md`, byte for byte, to a
-`previous.md` file in that same scope-and-machine folder — before the new content is written. Open
-**Project context → step ② → Working state** and, whenever a replaced handoff exists, you will see
-an unfolded line — *"Previous handoff by \<tool\> · \<age\> — open"* — that opens the replaced text
+`previous.md` file in that same scope-and-machine folder — before the new content is written. Open the note in the reader (**Projects → Now → Open the full note ›**) and, whenever a replaced
+handoff exists, you will see a line — *"Previous handoff by \<tool\> · \<age\> — open"* — that opens the replaced text
 in the right-side reader, labelled *"Replaced handoff — by \<tool\>"* and treated as **recorded data
 to verify**, not instructions to follow. `previous.md` holds only the single most recent cross-tool
 replacement — a second cross-tool save replaces it in turn — and an ordinary same-tool save never
@@ -2429,7 +2182,7 @@ name. Nothing else creates one.
 | **Right when** | You only ever need *where things stand now* — one thread, or one per tool | You want each session's handoff kept (one per session), or several threads run side by side (one per work-stream) |
 | **What you keep** | The newest handoff. Older ones survive only as one Journal line each | Every handoff, each readable in the reader |
 | **Resuming** | Always simple: `latest`, or the one name | `latest` opens the newest; name a scope to open another |
-| **The cost** | Yesterday's full text is gone once today's save lands | A longer **Handoffs** table (the trash on a row removes one, since v3.75.0) |
+| **The cost** | Yesterday's full text is gone once today's save lands | A longer **History** table (**Delete…** removes one, since v3.75.0) |
 | **Line for the brief** | *"Save working state under scope `main`."* — or nothing, and each tool uses its own scope | *"…ONE scope per session named `session-YYYY-MM-DD-topic`…"* or *"…one scope per work-stream…"* |
 
 **Add a new scope** when a new session starts under a per-session rule, when a genuinely separate
@@ -2463,7 +2216,7 @@ decision and at least every ten tool calls, and ALWAYS before you stop; a save
 overwrites, so send the complete state each time.
 ```
 
-- **Start from Copy agent instructions** (Domains → Projects, or the Project context screen). As
+- **Start from Copy agent instructions** (Domains → Projects, or the **"···"** menu on the Projects page). As
   copied (since v3.76.0) it calls `get_project_context`, reads the newest handoff, and saves under a
   scope named for the tool that reads it — right for *several agent harnesses on one computer*, and for
   one tool it is one stream under that tool's name. For a brief-set pattern (one scope per session,
@@ -2479,7 +2232,7 @@ overwrites, so send the complete state each time.
   and the `my-curator` command read it, whichever tool is running. (The MCP server itself does not —
   which is why the pointer names the project too.)
 - **Antigravity has its own row in The Curator's harness table (since v3.76.0).** The app's
-  **Setup** step ([§13e](#13e-the-setup-check-in-the-app)) shows all of the following for this
+  **Agents** tab ([§13e](#13e-the-setup-check-in-the-app)) shows all of the following for this
   project on this computer; in a terminal, `my-curator doctor` shows whether its MCP config names the bridge (it checks `~/.gemini/config/`,
   `~/.gemini/antigravity/` and `~/.gemini/antigravity-ide/`), whether `AGENTS.md`/`GEMINI.md` in
   this folder carry the block, and whether your installed skills match this version.
@@ -2532,7 +2285,7 @@ across the whole project — so name the one you want rather than assuming `late
    `.curator-project`.
 3. Each session: *"resume"* → the agent opens `latest`, reads the brief, works, and saves under
    `session-2026-09-25-billing` as it goes and before it stops.
-4. A week later every session is a row in **Handoffs**, newest first, each readable in the reader.
+4. A week later every session is a row in **History** *(Pro)*, newest first, each readable in the reader.
 
 **2 — Claude Code and Antigravity, same project, same computer, same afternoon.**
 
@@ -2540,8 +2293,8 @@ across the whole project — so name the one you want rather than assuming `late
 2. Put the same pointer in `CLAUDE.md` (for Claude Code) and `AGENTS.md` (for Antigravity).
 3. Start each one naming its scope: *"resume `claude-code-ui`"*, *"resume `antigravity-api`"*. If
    you installed hooks for Claude Code, add `--scope claude-code-ui` to them.
-4. **Handoffs** shows two rows, one per tool, on this machine. If step ② ever shows *"Two tools are
-   writing…"*, one of them saved under the other's scope — tell it which is its own.
+4. **History** shows two rows, one per tool, on this machine. If the Now tab ever shows *"Two agents are
+   writing the same handoff"*, one of them saved under the other's scope — tell it which is its own.
 
 **3 — Laptop by day, desktop in the evening.**
 
@@ -2549,35 +2302,21 @@ across the whole project — so name the one you want rather than assuming `late
 2. Laptop, end of day: the agent saves → **Sync now** → `git push`.
 3. Desktop: `git pull` → **Sync now** → *"resume"*. The agent opens `latest` — the laptop's
    handoff — and says it came from another machine.
-4. The desktop's save lands in the desktop's own folder under the same scope. **Handoffs** now shows
-   the scope twice, once per machine, and the next read on either computer opens the newer one.
+4. The desktop's save lands in the desktop's own folder under the same scope. **History** now shows
+   the work-stream twice, once per computer, and the next read on either computer opens the newer one.
 
 ##### Knowledge — which domains a project draws on
 
-**One row per domain, plus a picker in a head row above them.** Through v3.64.2 a project could
-only ever read the domain it lived in, with no way to say otherwise — *"Where do I select which
-domain gets sourced — is this even an option?"* was the maintainer's own question about the single
-summary row this step used to be. v3.65.0 added a picker but let the newly-chosen domain **replace**
-the project's own; production feedback called that "why only one? why not two or three?" and traced
-it to copy that contradicted what the route already did. **v3.65.1 makes the code's own behaviour
-legible:** the project's own domain is now an **explicit, always-listed row from the start** — never
-an implied default you have to know about — and **"+ Add a domain"**, in the head row above the
-rows (the same head-row placement step ① uses), *adds* to that list rather than replacing it. Pick
-one from the shared picker — the same component every single-select list in the app uses, one at a
-time, never a menu of checkboxes — over every domain on this install; **Remove** now lives *inside*
-each expanded row, beside its two doors, the same place the documents table's own Remove sits.
-Removing the last added domain puts the project back on just its own. **At most twelve.**
+**The Starting kit's Knowledge row names the domains this project draws on; Add a domain adds
+one.** The project's own domain is always listed; **Add a domain** *adds* to that list rather than
+replacing it — pick one from the shared picker over every domain on this install, one at a time.
+**At most twelve.** The project's own domain carries a small **default** badge only while nothing
+has been explicitly chosen. Why a project reads the domain it lives in is in the row's
+**About knowledge** explainer.
 
-**The step's body is the head row and the rows, nothing else.** The forty-word paragraph explaining
-*why* a project reads the domain it lives in used to sit under the picker as its own sentence; it
-now lives only in the step's ⓘ. The one thing that stays on the row itself is a small **default**
-badge — the same quiet badge style the Documents table uses for "shared mirror" — shown only while
-nothing has been explicitly chosen yet; the moment you add a domain, the badge disappears from
-every row, because at that point the set is a choice rather than a default.
-
-Each row's summary line names the domain, its page count, and how long ago it was last written to —
+**Add a domain** opens the domain list under the rows. Each domain's line names it, its page count, and how long ago it was last written to —
 *"projects · 391 pages · 3 days ago"*, with the domain's own [identity dot](design-system-source.md#18-identity--one-palette-one-mapping-one-glyph-v3651)
-before the name — and opens to the same recessed, monospace instrument the rest of this step uses:
+before the name — and opens to its figures:
 entities, concepts, summaries and the last-ingested title, plus two doors, **Open in Domains** and
 **Ask this domain**, for that domain specifically, and its own **Remove**. **As of v3.65.1 the
 entity, concept and summary lines each carry a depth bar** against that domain's own page count —
@@ -2589,10 +2328,7 @@ not synced here yet. A reading still in flight, or a failed one, is **not** turn
 layer **accumulates**: a new source makes an existing page richer rather than adding a second copy
 of it.
 
-**v3.65.2 fixed the picker itself** — production use of v3.65.1 found the "+ Add a domain" picker
-and every row's Remove *"basically not functioning"*: the picker's pick handler was wired to the
-wrong callback name, so choosing a domain did nothing, and Remove had the same defect. Adding and
-removing now go through the real route end to end. **Remove has three states**, depending on how
+**Remove has three states**, depending on how
 many domains the project currently draws on:
 
 | Rows | Remove | Why |
@@ -2601,7 +2337,7 @@ many domains the project currently draws on:
 | Two or more rows | **Live on every row**, including the project's own domain | The store allows any non-empty list; a project that should draw only on `research` is a legitimate choice |
 | One row, explicitly chosen | **Live**, and states what pressing it will do — *"Removing it puts `<default>` back as the default."* | An outcome at the moment of acting, stated rather than left to guesswork |
 
-The domain is what the project *reads*, not part of the project, which is why this step is a list of
+The domain is what the project *reads*, not part of the project, which is why this is a list of
 summary rows and nothing else until one is opened. There is no page list here and no health report:
 both live in **Domains**, and each row's figures come from one cheap request per domain that reads no
 page content at all, so opening this screen costs one request per chosen domain rather than a scan.
@@ -2610,9 +2346,6 @@ page content at all, so opening this screen costs one request per chosen domain 
 app-wide across domains, so before v3.62.0 a jump from a project in one domain would have landed on
 whichever domain Domains happened to have open last.
 
-*(Step ③'s ⓘ explains the layer but carries **no link into these docs** this release — the docs-key
-it wants does not exist yet. Every other ⓘ on the page links out.)*
-
 **What Chat does with this.** Pin a project in Chat and its picker's footer discloses which domains
 that project's knowledge lives in and whether you chose them or it is just the project's own domain
 — but Chat still reads **one** domain, the chip that is filled. A conversation does not widen its
@@ -2620,69 +2353,42 @@ own reach because a project points somewhere else; the footer says so plainly ra
 you, because switching domains would unpin the project. → [§9, Chat with your brain](#9-chat-with-your-brain)
 for the marked chips and what they mean.
 
-#### The Handoffs table
+#### History — every saved note *(Pro)*
 
-*(Called the Work-stream table through v3.65.0 — the row it lives inside is now **Handoffs**; the
-store still calls each one a `scope`, [above](#the-word-on-screen-and-the-word-on-disk).)*
+*(Until v4.2.x this was the **Handoffs** table inside step ② Memory. Since v4.3.0 the latest note
+is on the **Now** tab, the next few are **Earlier notes**, and Pro's **History** tab lists them
+all.)*
 
-The **Work-stream** and **Machine** dropdowns are gone. One table replaces them, one row per
-**(scope, machine)** pair, newest first — **ordered by the same clock the rows display**,
-which is the agent's own save time wherever there is one. So the ages run straight down the
-column and the dots cool with them, and the order can never contradict the reading beside it.
+**One row per saved note — one per work-stream per computer**, the store's own unit (a save
+replaces the note before it in the same work-stream on the same computer, so every row is the
+latest of its kind; each save is a line in that row's journal). Newest first, ordered by the
+agent's own save time wherever there is one.
 
 | Column | What it holds |
 |---|---|
-| **Handoff** | A freshness dot and the scope's slug. The row you have open carries an accent bar down its left edge |
-| **Working on** | That save's own one-line headline — *not* the project's, so a fortnight-old row shows what it was doing a fortnight ago. An em dash when the save carried none |
-| **Last saved** | A relative age (*"3 hr ago"*, *"2 weeks ago"*). The exact timestamp — and the words *file time* when the reading is the file's rather than the agent's — travel in the row's accessible name, so a screen reader announces them |
-| **Machine** | The installation that wrote it, plus a **this machine** tag on every row in your own machine's folder — and only when the app can positively identify it, never guessed from a lookalike name |
-| **Harness** | The agent harness and the model that wrote the save, e.g. *"Claude Code · opus"*. *Since v3.76.0* the tool is shown under its one normalised name, so `claude-code`, `Claude Code` and `Claude Code (desktop)` all read **Claude Code** down the column — and on the Journal's lines and the open handoff's byline, which use the same name; the agent's own spelling is kept in the accessible text |
-| *(trash)* | **v3.75.0.** A neutral trash icon that deletes the whole scope — see [Deleting a handoff](#deleting-a-handoff). Absent on a Shared Brain mirror |
+| **When** | A relative age (*"3 hr ago"*), worked out from the agent's own clock |
+| **Work-stream** | The name the note was saved under (`scope` in the store) |
+| **Harness** | The agent harness that wrote it, under its one normalised name — `claude-code`, `Claude Code` and `Claude Code (desktop)` all read **Claude Code** |
+| **Model** | The model the harness reported |
+| **Headline** | That save's own one-line headline — *not* the project's, so a fortnight-old row shows what it was doing a fortnight ago |
+| **Computer** | The computer that saved it, by name |
+| **Size** | The note's size, against nothing — a note over its budget is trimmed and the trim is noted in the note itself, never refused |
+| **Delete** | **Delete…** — the whole work-stream ([Deleting a handoff](#deleting-a-handoff)). Absent on a Shared Brain mirror |
 
-**Press a row to open it.** That replaces the whole picker: pick the scope and the machine
-in one gesture, from a list that already tells you which is worth opening — and since v3.56.0 the
-handoff opens in the [reader](#reading-a-handoff) rather than underneath the table. Click anywhere
-on a Handoffs or Documents row to open it in the reader.
-
-**The table shows the newest five, and a `Show N more` row extends it** (*v3.56.0*). A project that
-has run for a month across two machines is twenty rows, and twenty rows own the page the same way
-the handoff document used to. The row sits **under** the table rather than inside it, so it can
-never scroll out of reach of the list it extends, and pressing it **appends** the next window —
-the rows you have already read do not move. **The Journal row's own "Show N more" follows the same
-rule** (v3.65.1) — it used to be a separate footer card with a floating button that dropped your
-scroll position back to the top of the list; now it is one row, appended in place, the same as here.
-
-**The step is all the rest, not another five.** A project with seven handoffs has two hidden,
-and pressing twice for two rows is the friction rather than the rows; so the button says *"Show 2
-more"* and that is the end of it. Past twenty the step becomes ten, because one press that paints
-forty rows is a wall.
-
-Two details worth knowing:
-
-- **The window resets when you switch projects.** Every project opens at five.
-- **The scope you have open is always painted**, even when it sits past the window — the
-  window is *stretched* down to it rather than the row being lifted to the top. This table's
-  header says *newest first*, and a highlighted row sitting above one three minutes younger would
-  be the same lie in a smaller font.
-
-Under the table sits a line like *"13 handoffs · 16 saved copies"*. **Those are two different
-numbers and both are real:** each machine writes into its own folder inside a scope, so one
-scope can appear as several rows. While rows are hidden, a third clause is appended —
-*"· showing 5 of 16"*, counted in **rows**, so its second figure is the saved-copy total rather
-than the scope one — and it disappears once everything is on screen, because a list that
-fits says nothing about its own length. That clause is **about this table's window**; if the store
-itself could only return the most recently saved copies, it says so in its own separate clause and
-gives the true total. Two caps, two sentences — neither is ever reported as the other.
+**Search notes…** filters by any of those words; the **Harness** picker narrows to one agent.
+Sort by any column with a sortable head. **Press a row to open that note** in the
+[reader](#reading-a-handoff). Above the table, a small **Agent connections** table says, in plain
+words, how many agents connected in the last 7 days, how many read this project at the start and how
+many saved before stopping, and **Saves by harness** for the same days.
 
 #### Deleting a handoff
 
-*New in v3.75.0.* Each row of the **Handoffs** table ends in a small trash icon. It deletes the
-**whole scope** the row belongs to — every machine's saved copy of it, each with its Journal and
+*New in v3.75.0.* **Delete…** sits in the footer of the note on the **Now** tab, and on every row of
+Pro's **History** table. It deletes the **whole work-stream** the note belongs to — every machine's saved copy of it, each with its Journal and
 any kept previous handoff — not just the row you pressed. Nothing else is touched: the standing
 brief, your other scopes, the Documents and the wiki stay as they are.
 
-1. Press the trash on any row of the scope. A card opens above the table: *"Delete handoff
-   `main`?"*
+1. Press **Delete…**. A card opens: *"Delete handoff `main`?"*
 2. The card reads the scope fresh and lists **every machine's copy** with its newest headline and
    how long ago it was saved, marking the one from **this machine**. When any copy was saved on
    another computer it says so plainly: *"Sync will remove it on your other computers too."*
@@ -2692,7 +2398,7 @@ brief, your other scopes, the Documents and the wiki stay as they are.
    closes the card.
 
 When it is done, the card is replaced by a line saying what went and the exact folder it now lives
-in; the table, its counts and the project list refresh on their own.
+in; the page and the project list refresh on their own.
 
 **To restore it:** open **Settings → [Trash](#trash)** and press **Restore** on its row (v3.76.0).
 If a handoff of that name has been saved since, the button offers `<name>-restored` instead — it
@@ -2706,26 +2412,27 @@ where you deleted it.
 
 #### Reading a handoff
 
-Pressing a work-stream row opens its handoff in the **reader** — the slide-in panel over the main
+**Open the full note ›** on the Now tab, or a row in **Earlier notes** or **History**, opens that
+handoff in the **reader** — the slide-in panel over the main
 column that a wiki page opens in ([§11](#inside-the-reader)), with the rail and the sidebar still
 live behind it. That is exactly right for a document you are reading *about* a project you are
 still looking at.
 
 ![The reader panel open over the Project context view of the demo project. The rail and the project sidebar stay lit on the left; the page behind is dimmed and blurred. The panel's top line is the file's path in monospace, state/exhibit-site/main/demo-mac-4d3e2f/current.md, with an esc keycap and a close cross. The handoff's headline is the title: 'Checklist run once on a spare kiosk — offline mode fails on first load'. Chips read handoff, handoff: main, machine: demo-mac-4d3e2f and this machine. Then Saved '40 min ago' in large monospace over 'Antigravity · gemini-3-pro · updates live', and the line 'Previous handoff by Claude Code · 4 hr ago — open'. The handoff renders as Markdown: Where things stand (the site works online; with the cable out the first load fails because the service worker has not installed), Traps and dead ends (the first visit must happen online), and Next steps (add a 'first load online' step to the checklist), then BACKLINKS · 0.](images/curator-agent-memory-reader.png)
 
-*A handoff open in the reader. The **path line** along the top is the real file, so you can find it in Obsidian or in your synced repository. The chips name the scope and the machine. The **Saved** reading is the same figure the overview's **MEMORY** tile gives — same clock, same function — with the harness and model that wrote it and "updates live" while you watch. Because Antigravity's save replaced one Claude Code had made in the same scope, the reader also names the **previous handoff** and opens it on request (v3.74.0). Behind the scrim, the page you pressed from is exactly where you left it; **Esc**, the dimmed area or the ✕ close the panel and put the keyboard back on the row. Shown on the synthetic demo workspace; `node scripts/screenshots.mjs` regenerates it.*
+*A handoff open in the reader. The **path line** along the top is the real file, so you can find it in Obsidian or in your synced repository. The chips name the scope and the machine. The **Saved** reading is the same figure the Now tab's footer gives — same clock, same function — with the harness and model that wrote it and "updates live" while you watch. Because Antigravity's save replaced one Claude Code had made in the same scope, the reader also names the **previous handoff** and opens it on request (v3.74.0). Behind the scrim, the page you pressed from is exactly where you left it; **Esc**, the dimmed area or the ✕ close the panel and put the keyboard back where it was. Shown on the synthetic demo workspace before v4.3.0: the page dimmed behind it is the old Context page — the reader itself is unchanged.*
 
 | In the reader | What it holds |
 |---|---|
 | **The path line** | `state/<project>/<scope>/<machine>/current.md` — the real file, so you can find it in Obsidian or in your synced repository |
 | **The title** | The handoff's own first line. A handoff with no headline is titled after its scope |
 | **The chips** | A `handoff` type badge, then `handoff: <slug>` (v3.65.1 — was `work-stream: <slug>`; the store field itself is `scope`, [the vocabulary table](#the-word-on-screen-and-the-word-on-disk) above), `machine: <name>`, and — only on positive evidence — **this machine** or **synced from another machine**. A handoff that hit the read cap, or that had protocol-shaped text neutralised on read, says so in a chip too |
-| **The reading** | *"Saved 5 hr ago · Claude Code · claude-fable-5-1 · updates live"* — the **same** figure the overview's **MEMORY** tile shows, from the same clock, so the two can never name different times for one save. An **`incomplete`** or **`summary shortened`** badge sits on that line when the save carried one, not under it |
+| **The reading** | *"Saved 5 hr ago · Claude Code · claude-fable-5-1 · updates live"* — the **same** figure the Now tab's footer shows, from the same clock, so the two can never name different times for one save. An **`incomplete`** or **`summary shortened`** badge sits on that line when the save carried one, not under it |
 | **The notes** | The truncation and sanitisation warnings, in full and never folded |
 | **The body** | The handoff, rendered as Markdown |
 
 **To close it:** press **Esc**, click the dimmed area outside it, or click the **✕** — and focus
-goes back to the row you pressed, so the keyboard is never left stranded in a panel it cannot
+goes back to what you pressed, so the keyboard is never left stranded in a panel it cannot
 leave. It also closes, as every reader does, the moment you click anything in the rail.
 
 A handoff has **no raw-source bar** — it is not a wiki page and there is no ingested document
@@ -2743,17 +2450,10 @@ which is a different claim.
 
 #### Editing the standing brief
 
-The **pencil** sits at the right-hand end of the brief fold's own head — on the card it edits, not
-under the document, where the old **Edit brief** button was buried at the bottom of a long brief,
-and not on a toolbar row of its own, where it floated with nothing beside it. It is **icon only**;
-its name is on the button for a screen reader, and there is no tooltip, because a tooltip is
-unreachable by keyboard and by touch.
-
-**Pressing it opens the fold and the editor together**, so it works the same whether the brief is
-open or shut. While an editor is up the pencil is **withheld** — pressing it would rebuild the
-draft from disk and take your unsaved text with it; **Esc** or **Cancel** is the way out, and both
-ask before discarding. A read-only Shared Brain mirror gets no pencil at all, because the write
-would only be refused.
+**Projects → Starting kit → Brief → Edit** opens the editor under the rows. While an editor is up,
+pressing **Edit** again does not rebuild the draft from disk and take your unsaved text with it;
+**Esc** or **Cancel** is the way out, and both ask before discarding. A read-only Shared Brain
+mirror shows the Brief row without **Edit**, because the write would only be refused.
 
 | Key | What it does |
 |---|---|
@@ -2791,14 +2491,14 @@ novel?*
 
 Every "how recently" mark in the app is now cut from **one scale** — five age tiers plus an
 explicit *unknown* (*new in v3.55.0 — there were three ladders, all painted in the brand violet,
-and none of them agreed with the menu bar*). The Project-context pips, the Ingest **DESTINATION** rows and the Domains **KNOWLEDGE** rows
+and none of them agreed with the menu bar*). The Projects page's knowledge and document rows, the Ingest **DESTINATION** rows and the Domains **KNOWLEDGE** rows
 all use it, and its colours are the ones the [menu bar icon](#6b-the-menu-bar-icon-mac-app)
 already spoke.
 
 | Tier | Age | Looks like | Where you see it |
 |---|---|---|---|
-| **live** | under a minute | filled teal with a halo | Project context only |
-| **recent** | under an hour | filled teal | Project context only |
+| **live** | under a minute | filled teal with a halo | Projects only |
+| **recent** | under an hour | filled teal | Projects only |
 | **today** | under 24 hours | filled amber | everywhere |
 | **week** | under 7 days | filled grey | everywhere |
 | **dormant** | a week or more | **hollow** grey | everywhere |
@@ -2820,94 +2520,36 @@ Three things follow from that table and are worth knowing:
 The mark is never the only signal: the age in words sits immediately beside it, every mark is
 hidden from screen readers, and the words are what a screen reader announces.
 
-#### The overview's MEMORY tile, and the warnings above the four rows
+#### The notices above the note
 
-*"Is this saved, and is it any good?"* is answered without opening anything, on a healthy day.
-Since v3.62.0 that has meant the overview strip — **DOCUMENTS · MEMORY · KNOWLEDGE**, each a
-freshness dot and a word, joined by **CAPTURE** in v3.64.1. **Through v3.65.0 a fourth reading, a
-"Last saved" card or row, repeated the MEMORY tile's own age with the tool and model that wrote
-it** — first as its own card between step ① and step ②, then, from v3.64.1, as the first row inside
-step ② Memory.
+*"Is this saved, and is it any good?"* is answered without opening anything. The header's status
+sentence says who saved last, when and where; the Now tab's footer says it again under the note.
+**Everything that qualifies the last save is a notice above the note, never folded** — the rule
+since v3.16.1: *a warning, a cost or an outcome is never one click further away than the thing it
+qualifies.* On an ordinary save — complete, on the agent's own clock, one harness — there is no
+notice at all.
 
-**v3.65.1 removes that row outright.** The maintainer's own reading of the screen was that it
-answered a question the tile one scroll up had already answered, in the same words, on a page whose
-whole subject is not repeating one design twice. The two facts it carried went to the two places
-that actually needed them: the age lives in the **MEMORY** tile, and *which* handoff — the scope, the
-tool, whether it wrote in full — lives in the **[Handoffs](#the-handoffs-table)** row's own summary
-line, open it for the rest.
-
-```
-MEMORY
-saved 4 min ago
-```
-
-The pip is the pre-attentive half and the word is the exact half. Below it, step ② can carry up to
-three separate unfolded blocks, each rendered only when it has something to say and never inside a
-chevron — the reader for **v3.16.1**'s rule: *a warning, a cost or an outcome is never one click
-further away than the row it qualifies*.
-
-**"Warnings about the last save"** (renamed from *"About the last save"* in v3.65.1) is the first,
-and the only one this table is about. It carries **outcomes about one specific save** — not the two
-clocks, not which machine wrote it, both of which moved elsewhere in this same release (below). On
-an ordinary save, on the agent's own clock, complete, with one harness, it renders **nothing at
-all** — no empty card, no monitor with zero lines — and step ② opens directly on its four rows.
-That is the acceptance picture, reached by having nothing to say rather than by hiding something.
-
-| Line | When it appears | What to do |
+| Notice | When it appears | What to do |
 |---|---|---|
-| *"Part of this handoff did not survive the save — content named in the note below was dropped or cut short…"* | Handoff CONTENT was cut — a section, or items past a list's cap. The app knows because the store recorded it | Ask the agent to save that content again. The handoff you are reading really is **missing** what the note names |
-| A full-width report headed **"Handoff saved in full"** (v3.65.2 — see below) | Only a LABEL was clipped — most often the one-line headline, which caps at 200 characters. The handoff body is complete | Nothing urgent. The headline is the one thing a future session sees before deciding whether to open this state, so a clipped one is a weaker index entry — worth a shorter re-save, not a rescue |
-| *"That save deliberately replaced a larger handoff…"* | The agent overrode the guard that normally refuses a small save over a much larger one | Nothing was lost from what it sent — but the longer document it overwrote is not recoverable |
-| *"Two tools are writing `<scope>`…"*, with **"Give each tool its own handoff"** | Two agent harnesses have both saved into the same handoff file and are overwriting each other | Give each tool its own scope — the same collision, and the same remedy, as [§6b Scenario 1](#scenario-1--two-agent-tools-on-one-computer). The journal keeps both trails regardless |
-| *"Newer state in this project: `<scope>`…"* | Some **other** scope in this project holds something more recent than the one on screen | Check it — the [Handoffs table](#the-handoffs-table) above is where. An agent told to *"reuse an existing scope"* can be saving beside you into one you are not watching |
-| *"`<machine>` saved after this computer…"*, with **"Pull before you continue, or that work will be waiting there"** | Another **machine** has saved more recently than this one — the same reading the menu bar gives | **Pull before you continue.** This is a different question from the line above it — that one is about a scope on THIS machine you are not watching, this one is about the same work continuing on another machine |
+| **Part of the last handoff did not survive the save.** *(error)* | Handoff CONTENT was cut — a section, or items past a list's cap. The store recorded it | Ask the agent to save that content again. The note really is **missing** what the notice names |
+| **The last handoff's summary or a label was shortened.** | Only a LABEL was clipped — most often the one-line headline, capped at 200 characters. The body is complete | Nothing urgent; it clears on the next save whose headline fits |
+| **The last save replaced a larger handoff.** | The agent overrode the guard that normally refuses a small save over a much larger one | Nothing the agent sent was lost, but the longer document it overwrote cannot be recovered |
+| **Two agents are writing the same handoff.** *(error)* | Two agent harnesses saved into the same handoff file and are overwriting each other | Give each agent its own work-stream ([the pattern](#several-agent-tools-on-one-computer)). The journal keeps both trails |
+| **There is newer state in this project.** | Another work-stream in this project holds something more recent than the note on screen | Check it in **History** *(Pro)* or **Earlier notes** |
+| **‹computer› saved after this computer.** | Another computer saved more recently than this one — the same reading the menu bar gives | **Sync now** before you continue, or that work waits there |
+| **An agent saved here since you opened this page.** | A save landed while you were looking | Press **Reload** |
+| **Some state here is on disk but is not being read.** | Part of this project's state exists on disk but could not be read by name | The page says so rather than silently showing fewer notes than there are |
+| **This handoff is longer than the state budget.** | The note is over the size a read returns | The tail is not shown; the file is complete up to that budget |
+| **Protocol-shaped text in this handoff was neutralised on read.** | Text that looked like instructions to an agent was defused | The words are unchanged; only their markup is |
+| **This is a read-only Shared Brain mirror.** | The project is a cohort's mirror | What you read here can have been written by someone else on your cohort |
 
-**A clipped save became a full-width report in v3.65.2, not a narrow paragraph.** The maintainer's
-own reaction to the earlier shape: *"I don't understand what this is. It is not wide enough — why
-not use the full screen real estate, left to right. If this is an active card where information
-changes, like a report, it should be in a format and have visuals, indicators of what is going on."*
-It is now the same recessed, monospace instrument every other live reading on this screen uses, not
-a sentence of prose capped at 68 characters. It says, in plain words: **the handoff was saved in
-full** — nothing was lost — and **only the one-line headline was shortened**, to its 200-character
-limit; the report then states exactly how many characters it held before the cut, with a depth bar
-against that 200-character limit (the SIZE channel — [see "Reading the
-screen"](#reading-the-screen)). If more than one field was clipped in that save, **each gets its own
-line**, in the store's own words rather than only the first note truncated to a summary. The report
-**clears on the next save to that same handoff whose headline fits** — it is not a persistent badge,
-it describes one save, and it stops describing anything the moment a later save makes it moot.
+> **"Saved", never "you are saved".** The page knows when the last save happened; it cannot know
+> whether anything has changed since. That inference is left where it belongs — with you.
 
-**Two facts that used to be unfolded lines here are gone from this monitor as of v3.65.1 — not
-dropped, moved:** which clock an age came from (the agent's own, or the file's, when no journal
-entry carried a save time) is explained once in the overview card's own ⓘ, since it qualifies every
-age on the page rather than one save; and that the open handoff was written on another machine and
-synced here is now the Handoffs table's own **MACHINE** column, per row — more precise than one
-sentence about whichever pair happened to be open — and rides as a **synced from another machine**
-chip when you open that handoff in the [reader](#reading-a-handoff). Both were genuine facts, never
-warnings, and the step-body rule is that an explanation lives in the ⓘ or in a row, never in a block
-sitting above the rows.
-
-**Two more things can appear here, separately from the save-warnings monitor above:** a **Reload**
-notice, when an agent has saved to this project since you opened the page — pressing it re-reads
-rather than assuming the newer save should simply replace what is on screen; and a note when some
-part of this project's state exists on disk but could not be read by name (an unreadable directory,
-an unreadable machine folder), which says so rather than silently showing fewer rows than there
-really are.
-
-> **The tile says "saved", never "you are saved".** It knows when the last save happened; it cannot
-> know whether anything has changed since. That inference is left where it belongs — with you.
-
-> **There are two clocks behind every age on this page**, and the screen says which one it used.
-> The **agent's clock** is the time the agent recorded when it saved. The **file's clock** is when
-> the file last changed on this disk — which, on a computer that syncs, is when the file *arrived*
-> here. The agent's clock is used wherever there is one, and a reading that had to fall back says
-> **file time** in its own provenance line, in words, rather than in a tooltip.
-
-> ⚠️ **Several lines of this strip have still never been looked at on a screen.** Four have now
-> been photographed rendering — *"This file arrived on this computer N ago"*, *"Newer state in this
-> project"* and *"Written on `<machine>` and synced here"*, all three visible in the screenshot
-> above, and the **`summary shortened`** badge in an earlier one. The rest is covered by the
-> automated tests and by nothing else. If a line reads wrongly, that is worth
-> [reporting](https://github.com/talirezun/the-curator/issues).
+> **There are two clocks behind every age on this page**, and the page uses the agent's wherever
+> there is one. The **agent's clock** is the time the agent recorded when it saved. The **file's
+> clock** is when the file last changed on this disk — which, on a computer that syncs, is when the
+> file *arrived* here. The file's clock is used only when no agent time was recorded at all.
 
 Your agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — is what
 saves and reads this. It survives across sessions, agents, models and machines. It is plain
@@ -2956,15 +2598,6 @@ document an agent wrote rather than mirrored, **save the fresher version yoursel
 Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety
 rules — is in **[working-state.md](working-state.md)**.
 
-**Two more depth-bar readings live inside step ② Memory, each against its own named total —
-never a grade.** The **Handoffs** row's **Size** column shows each handoff's size against the
-48 KB a handoff is trimmed to; it never turns red, because a save over that budget is trimmed and
-the trim is noted in the handoff itself, never refused — there is nothing left to warn about once
-the trim has already happened. Inside the **Agent connections** row, *started with the context* and *saved
-before stopping* are drawn as a share of every connection in the window, e.g. *"4 of 6"* — a share of
-a whole, not a target against which a bar can fail: nothing here is a grade, and neither bar ever
-turns red.
-
 ---
 
 ## 7b. The three places — ask, knowledge, context
@@ -2976,9 +2609,9 @@ three, and each one answers a different question:
 |---|---|---|
 | **Chat** | *ask* | One domain's wiki, and — with a project pinned — that project's context too |
 | **Domains** | *knowledge* | One subject at a time: everything that acts on a domain, on the domain's own page |
-| **Context** | *context* | One project's canonical documents, its working state, and whether your agents are actually reading and saving |
+| **Projects** | *context* | One project at a time: the note the last agent left, the agents that can open it, and what every agent reads first |
 
-![A diagram of the three-entry rail — Chat, Domains and Context, with Sync and Settings separated at the foot and no dividing line between the three — each joined to a column naming what it is for. Chat is "ask": one domain's wiki, and, with a project pinned, that project's brief, its latest handoff and its read-first documents; a reading, never a save. Domains is "knowledge": one subject at a time, with the domain page's six sections listed in order — OVERVIEW (counts, last ingest, the jump tiles), INGEST (drop a PDF, Markdown or text file), PAGES (Wiki, Context, All), PROJECTS (create, rename, brief, marker line), SHARED BRAIN (this domain's connections) and WIKI HEALTH (broken links, orphans, duplicates). INGEST and SHARED BRAIN each carry a small badge reading "also a full view". Context is the project layer: the canonical documents, the working state agents read and write, the knowledge it draws on, and the capture meter. Two lines at the foot read: one panel, two hosts — a section and its full view are the same code, so they cannot drift apart; and Sync and Settings sit at the foot of the rail, with no dividing line, because three places need no grouping.](images/curator-three-places.svg)
+![A diagram of the three-entry rail — Chat, Domains and Projects, with Sync and Settings separated at the foot and no dividing line between the three — each joined to a column naming what it is for. Chat is "ask": one domain's wiki, and, with a project pinned, that project's brief, its latest handoff and its read-first documents; a reading, never a save. Domains is "knowledge": one subject at a time, with the domain page's six sections listed in order — OVERVIEW (counts, last ingest, the jump tiles), INGEST (drop a PDF, Markdown or text file), PAGES (Wiki, Context, All), PROJECTS (create, rename, brief, marker line), SHARED BRAIN (this domain's connections) and WIKI HEALTH (broken links, orphans, duplicates). INGEST and SHARED BRAIN each carry a small badge reading "also a full view". Projects is the project layer: a notebook your agents share — its tabs Now, Agents and Starting kit, with History, Budget and Computers in Pro. Two lines at the foot read: one panel, two hosts — a section and its full view are the same code, so they cannot drift apart; and Sync and Settings sit at the foot of the rail, with no dividing line, because three places need no grouping.](images/curator-three-places.svg)
 
 ### Why three
 
@@ -2987,7 +2620,7 @@ compounds"* and *"give my agents context that outlives the session"*. The five-e
 **Ingest** and **Shared Brain** in the way of both: each acts on exactly **one domain**, and each
 made you leave the domain you were looking at in order to use it. So they moved to the page that
 already names that domain. And the dividing line — the one that said *everything below here is the
-advanced half* — was pointing at **Context**, which is the whole reason half this app's users
+advanced half* — was pointing at **Context** (now **Projects**), which is the whole reason half this app's users
 installed it.
 
 **Nothing was removed.** Both full-page views still exist, still restore if one of them is where
@@ -3014,7 +2647,7 @@ answer to a question already answered. The full view keeps its own.
 
 **New in v3.65.0.** Three places, and until this release, three different ways of drawing the same
 four kinds of thing: a count you can press, a row in a list, a piece you open for more, and a
-reading that changes while you watch it. Domains, Context and Settings had each grown their own
+reading that changes while you watch it. Domains, Context (now Projects) and Settings had each grown their own
 answer — a different sidebar, a different "Last saved" card, a different way of showing an MCP
 connection's status — not because any one of them was wrong, but because nothing said they had to
 agree. They now do, everywhere: one component per kind of content, not per screen.
@@ -3023,14 +2656,34 @@ agree. They now do, everywhere: one component per kind of content, not per scree
 
 | Component | Answers | Where you meet it |
 |---|---|---|
-| **The overview card** | *What does this hold, and where do I go?* | The top of Domains and of Project context — identical tile size, identical 22px figures on both |
-| **A sidebar row** | *Which one am I on?* | The Domains, Context and Settings sidebars — one identity dot, name, figure, freshness mark, clock and age, and a last line, with the current one shown as a filled row |
+| **The overview card** | *What does this hold, and where do I go?* | The top of Domains, and Pro's tile strip on a project — identical tile size, identical 22px figures |
+| **A sidebar row** | *Which one am I on?* | The Domains, Projects and Settings sidebars — one identity dot, name, figure, freshness mark, clock and age, and a last line, with the current one shown as a filled row |
 | **A fold row** | *What is inside, without opening it?* | Every collapsible section in the app — a title on the left, a one-line summary on the right, a chevron |
 | **The monitor** | *What is true right now?* | An MCP connection, an Agent connections count, a Sync status, a Wiki health scan — a recessed, monospace panel with its state as a coloured word, and any warning inside it always visible, never behind the chevron |
 
 **The rule that survives every one of them, restated for the last time here because it is the one
 that matters most:** a warning, a cost or an outcome never sits behind a chevron. Everything else
 may fold; that never does.
+
+#### The shared kit *(v4.3.0)*
+
+v4.3.0 starts the next step of the same idea: **seven parts every rebuilt screen is made of, and
+nothing else.** The Projects page is the first screen built entirely from them; the domain page,
+Chat and Settings follow in later releases, so for a while the two generations sit side by side.
+
+| Part | What it looks like | The rule |
+|---|---|---|
+| **Figure** | Every count, size, token estimate, age and price | One formatter: a kilobyte is **1,024 bytes** everywhere, "3,527" with a separator, ages from one ladder (*"27 min ago"*, *"2 weeks ago"*…) |
+| **Status chip** | A shape, a word and a tone | A closed list: **Ready** (green) · **Needs you** (amber) · **Working** · **Not connected** / **Off** (grey, hollow) · **Unknown** (grey, dashed) · **Failed** (red). Never colour alone |
+| **Notice** | A title, one line, at most two buttons, and **Why?** | Three tones — information, attention, error. The title is at most twelve words |
+| **Row** | Identity dot · title · one line · one status · at most one action · a chevron if it opens | The whole row is the button |
+| **Tabs and segmented** | A tab strip; a 2–4-way switch | Arrow keys move between tabs. A Pro tab is drawn only with Pro on, and never holds a warning that Simple lacks |
+| **Table** | Sortable column heads, numbers right-aligned | A row opens the reader; below 900 px a table stacks instead of scrolling sideways |
+| **Fold** | The one chevron row | Explanations and optional steps only — never a warning, a cost or an outcome |
+
+Plus **one page shape** (a header, one status sentence, a tab strip, then rows or a table) and
+**one verb list** — *Check again*, *Sync now*, *Connect*, *Add*, *Open* — so one action has one name
+on every screen.
 
 ### Reading the screen
 
@@ -3040,10 +2693,10 @@ Once you know what each one means, you can read a row without opening it.
 
 | Mark | Answers | Where it appears today |
 |---|---|---|
-| **Identity dot** | *Which domain?* | One colour per domain, the same colour everywhere that domain is named — a sidebar row, a Chat domain chip, a Knowledge row, the Context breadcrumb, the menubar widget. Never a second mapping or palette on any screen |
-| **Freshness dot** (with a clock glyph and an age) | *How recent?* | Every time-based reading in the app — a sidebar row's last save, a Handoffs row, a document's last update, the MCP bridge's connection strip |
-| **Depth bar** | *How much, against what total?* | A tinted bar behind a figure, right-anchored, its length a **named** denominator — never a guess. Today: a document's size against the project's own stored total (v3.70.0: stated plainly, never as an alarm); the running total in Add-from-folder against that same total; a domain's entity/concept/summary counts against its own page count; a clipped save's character count against its 200-character field limit; Handoffs' Size column (vs 48 KB); Agent connections' saved/read share of all connections in the window; step ④'s own **segmented window meter** (v3.70.0 — a special case: one violet hue in lightness steps, one segment per layer, every segment named, and it never takes the danger tone even when a reading budget runs past a quarter of the window); Chat's project footer (documents vs the 40,000-character document budget); an Ingest batch's spend against its cap; Wiki health's issues-per-category row; the MCP bridge's Busiest-tools and Across-projects rows; Settings → Knowledge base's Domains-in-this-folder rows |
-| **Tone** (colour, never alone) | *What was the outcome?* | A monitor's head word (ok / danger), a `loud` line for a warning or a cost — always paired with words, since colour alone never carries a reading in this app |
+| **Identity dot** | *Which domain?* | One colour per domain, the same colour everywhere that domain is named — a sidebar row, a Chat domain chip, a Knowledge row, the project header's kicker, the menubar widget. Never a second mapping or palette on any screen |
+| **Freshness dot** (with a clock glyph and an age) | *How recent?* | Every time-based reading in the app — a sidebar row's last save, a document's last update, the MCP bridge's connection strip |
+| **Depth bar** | *How much, against what total?* | A tinted bar behind a figure, right-anchored, its length a **named** denominator — never a guess. Today: a document's size against the project's own stored total (v3.70.0: stated plainly, never as an alarm); the running total in Add-from-folder against that same total; a domain's entity/concept/summary counts against its own page count; a clipped save's character count against its 200-character field limit; the Budget tab's **segmented window meter** (v3.70.0 — a special case: one violet hue in lightness steps, one segment per layer, every segment named, and it never takes the danger tone even when a reading budget runs past a quarter of the window); Chat's project footer (documents vs the 40,000-character document budget); an Ingest batch's spend against its cap; Wiki health's issues-per-category row; the MCP bridge's Busiest-tools and Across-projects rows; Settings → Knowledge base's Domains-in-this-folder rows |
+| **Tone** (colour, never alone) | *What was the outcome?* | A monitor's head word (ok / danger), a `loud` line for a warning or a cost, and since v4.3.0 the [status chip](#the-shared-kit-v430)'s green / amber / red / grey — always paired with words, since colour alone never carries a reading in this app |
 
 **The depth bar turns danger-toned only when its budget is actually exceeded, and the same fact is
 always also stated in words, unfolded** — never only a redder bar. A single document over budget on
@@ -3114,7 +2767,7 @@ a link floating with no visual weight of its own — *"just floating, not design
 barely noticed it,"* in the maintainer's words. It is now one designed callout, full width of the
 form: an info glyph and the sentence on the left, a real secondary button, **Add as a project
 document**, on the right, in the same row. The button opens **this domain's own project** in
-Context, at step ① Documents — where a file is kept verbatim and never run through the model, the
+**Projects**, at its documents — where a file is kept verbatim and never run through the model, the
 distinction the sentence itself is making. (It always opens the domain's own project, by name —
 not whichever project you looked at most recently, which is the one thing about it that is not yet
 configurable.)
@@ -3168,61 +2821,58 @@ optional, because the context layer and the MCP bridge do not need one.
 
 ## 7c. Simple and Pro
 
-*New in v4.2.0.* The Curator has **one switch, Pro**, that decides how much detail the
-screens show. Off, you get the **simple** view: each screen answers its question and gives you
-the next step. On, you get **every detail and control**.
+*New in v4.2.0; since v4.3.0 two layouts of the same data.* The Curator has **one switch, Pro**.
+Off — the default — every screen gives you **the answer and the next step**. On, it gives you
+**every detail and control, in tables, open**.
+
+| | Simple (Pro off) | Pro (Pro on) |
+|---|---|---|
+| **What it is for** | Getting the job done: where the work stands, which agent needs you, what to press | Working with all of it: every save, every check per computer, the token budget |
+| **How it looks** | Short rows, one status each, one sentence per screen | Full tables you can sort and filter, more tabs, data open rather than folded |
+| **What it never lacks** | A warning, a cost, a refusal, a confirmation, the result of what you pressed — and every task can be finished here | — |
+
+**The rules (v4.3.0).** *Until v4.2.x the rule was "Pro only reveals": the simple view was the Pro
+view with elements removed. Since v4.3.0 Simple and Pro may lay a screen out differently — Simple
+composes the answer, Pro shows the full table — over one set of data.* What did not change:
+
+1. **Nothing you need is ever Pro-only.** A warning, a cost, a refusal, a confirmation and the
+   result of a press are in both layouts, with the same meaning (Simple's wording may be shorter).
+   An automated test renders the Projects page both ways, tab by tab, and fails if one is missing
+   from Simple — and a tab drawn only in Pro may not hold one.
+2. **Every task finishes in Simple.** Connect an agent, fix one, add a document, edit the brief,
+   add a domain, sync, read a note.
+3. **One name per thing.** *Now*, *Agents*, *Starting kit*, *Brief*, *Documents*, *Knowledge* read
+   the same in both. (*Agent* in Simple headings; *Harness* as a column word in Pro tables.)
+4. **No behaviour difference.** A button does the same thing in both layouts.
+5. **A Pro setting you changed is said in Simple.** A reading budget or a window that is not the
+   default is stated in words under the Starting kit's bar.
 
 **Where it is.** Two places, one setting:
 
 - **On the rail, directly above Settings** — the small switch captioned **Pro**, on every
-  screen. Press it (or Tab to it and press Space).
-- **Settings › General › Pro mode** — the same switch, with one line under it: *"Saved on
-  this computer. Today it adds detail to the Context page."*
+  screen. Press it (or Tab to it and press Space). Its tooltip: *"Pro shows every detail and
+  control. Free — nothing is removed."*
+- **Settings › General › Pro mode** — the same switch.
 
-Flip either one and the other follows. Hover the rail switch for its tooltip: *"Pro shows
-every detail and control. Free — nothing is removed."*
+Flip either one and the other follows. **Everyone starts in Simple.** **It is free** — not a paid
+tier, nothing locked behind it. **Saved on this computer**, in its settings file, so the app window
+and a browser tab on the same computer agree; it is **not synced**, so two computers can differ, as
+the theme can. Turning it on plays one short shimmer down the rail (none if your system asks to
+reduce motion), and while it is on the switch glows and a thin line runs down the rail's edge — that
+is the only Pro mark; since v4.3.0 the revealed parts carry no **PRO** labels of their own.
 
-**Everyone starts in the simple view** — a new install, and an existing one after updating to
-v4.2.0. Nothing is migrated and nothing is lost: turn Pro on and every detail from before is
-there.
+**What Pro changes today — the Projects page.** In v4.3.0 the switch changes the [Projects
+page](#project-context--what-the-screen-shows); the domain page, Chat and Settings look the same
+either way and are rebuilt the same way in later releases.
 
-**It is free.** Pro is not a paid tier and nothing is locked behind it. It only changes how much
-you see.
-
-**Pro only reveals.** Turning it on never removes a control, renames one, or changes what one
-does. Turning it off never hides a **warning, a cost, a result, a refusal, a confirmation, or
-anything you need to finish a task** — those are on screen in both views, word for word. An
-automated test renders the Context page both ways and fails if anything of that kind is ever
-hidden in the simple view.
-
-**Saved on this computer.** The setting lives in this computer's settings file, so the app
-window and a browser tab on the same computer agree. It is **not synced**: two computers can
-differ, as the theme can.
-
-**"More in Pro".** A section that has more to show ends with one quiet line, **"More in Pro:
-…"**, naming exactly what is behind it. Press it: Pro turns on, the section stays where it was
-on screen so the new rows appear below your eye (at the very end of the page, as close as the
-page allows), the keyboard focus moves to that section, and a short note says **Pro is on** with
-**Undo**. **Undo** turns Pro off again and keeps the same place and focus. While Pro is on these
-lines are gone. A section with nothing hidden never shows one.
-
-**You can tell what Pro added.** While Pro is on the switch glows, a thin violet line runs down
-the edge of the rail, and every revealed block carries a faint line at its left and a small
-**PRO** label — on Context that is the **Window** and **Your harness's share** pickers, the
-**What an agent receives** and **How an agent reaches this** folds, the enlarged Curator part,
-and the three Setup folds. Switching it on plays one short shimmer down the rail (none if your system asks to
-reduce motion).
-
-**What Pro shows today — the Context page.** In v4.2.0 the switch changes **steps 4 and 5 of
-the Context page** only; every other screen looks the same either way.
-
-| Step | Simple (Pro off) | Pro adds |
+| On the Projects page | Simple | Pro |
 |---|---|---|
-| ④ **Session start** | The **Reading budget** picker; your context window drawn to scale, with every note under it; a four-line reading — the standing brief, the latest handoff, read first, and the session start with what is left free (and the "if applied" figure when a suggestion is pending); **What an agent receives, in full ›**, which opens the whole list in the reader | The **Window** and **Your harness's share** pickers in the head row; **The Curator's part, enlarged** bar with its legend; the **What an agent receives** fold (every layer, with sizes in bytes) and the **How an agent reaches this** fold |
-| ⑤ **Setup** | One row per agent harness, each with **one status and one action**, the whole row opening its setup steps; every warning that is not about one harness; the repository question when its folder is not set; files not on GitHub yet, with **Sync now**; the three travel routes, said once | The **Agent harnesses** table (Harness · Status · Last saved · Saved from · On this computer, the MCP / skills / block / hooks marks, **Open setup steps** and Remove), and the **Repository on this computer** and **Computers** folds |
-
-Steps ① to ③ are the same in both views. The setup steps a harness opens in the reader, and
-every fix button, are the same in both views too ([§13e](#13e-the-setup-check-in-the-app)).
+| **Header** | Name and one status sentence | + six tiles: Last save · Agents · Saves (7 days) · Documents · Knowledge · Starting kit |
+| **Sidebar** | Your projects | + a filter field and each project's work-stream count |
+| **Now** | The latest note as text, Earlier notes | + the note's facts and its work-stream's journal, as tables |
+| **Agents** | One row per agent, one status | + one table row per agent per computer — Connected · Skills · Instructions · Hooks · Last save · Saves 7 d |
+| **Starting kit** | Brief · Documents · Knowledge, one bar | + the documents table with its **At start** pickers, and the reading-plan helper |
+| **History · Budget · Computers** | One quiet line: *"More in Pro: every save in a table, the token budget, your computers. Turn on Pro ›"* | Three more tabs |
 
 **If a control this guide describes is not on your screen**, check whether Pro is on. Every
 control that appears only in Pro is marked *(Pro)* where this guide names it.
@@ -3836,7 +3486,7 @@ composer's pills read left to right: **Domain**, **Project**, **Length**, **Mode
 pill picks which knowledge base this conversation can see; the **Project** pill sits beside it,
 wearing the same pill face with a hollow grey mark instead of a coloured dot — open it and pick a
 project, and the answer also draws on its **brief**, its **latest handoff** and the canonical
-documents marked **read first** — on top of the domain's wiki, never instead of it. A slice of the
+documents marked **Always read** — on top of the domain's wiki, never instead of it. A slice of the
 project's journal and any other foundation that matches your question come in as well, the same
 way the bootstrap an agent gets chooses them.
 
@@ -3860,7 +3510,7 @@ of them, one press away.
 conversation still reads exactly one domain — the Domain pill's own choice — and pinning a project
 never widens it: widening it would unpin the project, since a project belongs to the domain it
 lives in. The Project picker's footer says how many other domains the project's own knowledge
-spans, whether you chose them in Project context or it is just the project's own domain, and names
+spans, whether you chose them in Projects (Starting kit → Knowledge) or it is just the project's own domain, and names
 any of them missing from this computer.
 
 Three things are worth knowing before you rely on it.
@@ -4057,7 +3707,7 @@ started.
 #### The composer — Domain, Project, Length, Model
 
 The composer's four pills are covered in full in [The composer — Domain, Project, Length and
-Model](#the-composer--domain-project-length-and-model) above. The short version: **Domain is fixed
+Model](#the-composer--domain-project-length-model) above. The short version: **Domain is fixed
 once a conversation exists** — a conversation lives in one domain's folder, so picking a different
 domain from that pill starts a *new* conversation there rather than moving this one; **Project and
 Model are picked per question**, so you can change either between messages in the same thread.
@@ -4495,7 +4145,7 @@ folder. Click one and it opens in the same reader a wiki page does.
 The **Memory** tab carries its own count and the **All** tab does **not** include them — "All"
 means wiki pages, the same number the PAGES figure above reports, so the two can never disagree.
 Memory pages are never mixed into Entities, Concepts or Summaries either. For the full working-state
-screen — journals, machines, editing a brief — use **Project context** in the rail
+screen — journals, machines, editing a brief — use **Projects** in the rail
 ([§13b](#one-domain-one-project-or-one-more-work-stream)); this list is for **reading** them where
 the rest of the domain's documents are.
 
@@ -4771,7 +4421,7 @@ Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or an
 
 > **About the screenshot above (screenshot predates v3.88.0).** It was taken before v3.85.0 and still shows the retired wizard's buttons (**Re-run setup**, **View config**, **Copy snippet**) and a five-block page. Since v3.88.0 the page is four blocks and block ①, **Agent harnesses**, holds the status, the installer and one row per agent harness; it is described next.
 
-You connect a tiny local MCP bridge (one-time, under 2 minutes — **Settings → MCP bridge → Install in your tools**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
+You connect a tiny local MCP bridge (one-time, under 2 minutes — **Projects → Connect an agent**, or **Settings → MCP bridge**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
 - **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search. There are **24 tools in total: 17 that read and 7 that write.** (Six of those — `get_working_state` and `save_working_state` since v3.17.0, `list_projects` and `save_project_brief` since v3.48.0, `get_project_context` and `save_foundation` since v3.59.0 — touch a project’s working state rather than its wiki; see [§13b](#13b-working-state--carrying-context-between-sessions).)
 - **Read the original document, not just the summary** — say *"check the actual source for that figure"* and Claude calls `get_raw_source` to pull the extracted text of the original file a summary was built from (never the raw bytes — PDFs are text-extracted first). If the file isn't on this machine (raw sources aren't synced), Claude is told the filename and when it was ingested instead.
@@ -4791,7 +4441,10 @@ Everything stays local — the MCP server only sees your wiki folder, and writes
 | **Windows** (the browser install) | **Claude Desktop** only, labelled **New on Windows — tell us if it works** | **Copy** |
 | **Linux** | Nothing | **Copy**, for every tool |
 
-Open **Settings → MCP bridge** (its rail line reads *Connect your agent harnesses to My Curator*). Since
+**Since v4.3.0 the quickest way in is a project: Projects → Connect an agent** — pick the agent, connect it on this
+computer, point it at the project, in one flow ([§7](#connect-an-agent--one-flow)). Settings › MCP bridge keeps
+the whole machine-wide picture and opens with a notice saying so — *"Connect agents from a project now."*,
+with **Open Projects**. Open **Settings → MCP bridge** (its rail line reads *Connect your agent harnesses to My Curator*). Since
 v3.90.0 the page says what each thing is, or what to do, in plain words. Under the title one line says
 what the page is for; then an **OVERVIEW** — **CONNECTED**, **NEEDS ATTENTION**, **TOOLS WORKING**
 (*24 of 24* from the last test, *—* if never tested) and **LAST USED** (when an agent harness last used a
@@ -4824,8 +4477,8 @@ fold: each **Settings file** that exists (plus the one Install for me would crea
 Curator's line*, *no Curator line*, *not there yet* or *not used on this computer* and **Show the
 file** (Mac only); **Remove The Curator from ‹app›** with the red **Remove**; **Put back the original
 settings file** with **Restore original** (only while a backup is valid); and, for Claude Code and
-Antigravity, *Automatic saves: on/off*. The same button, **Install for me**, appears on a Context →
-Setup to-fix line about an agent harness's connection.
+Antigravity, *Automatic saves: on/off*. The same button, **Install for me**, appears in **Connect an agent** and on an Agents-tab notice
+about an agent harness's connection.
 
 **② Skills** has one row per skill — `my-curator` (how to read and write your knowledge) and
 `curator-continuity` (how to save and resume work between sessions) — with *N of M harnesses up to date*.
@@ -4972,10 +4625,10 @@ All three read the same `domains/` folder. Nothing to sync between them. The int
 > version, the MCP and skills in every harness, the block in `CLAUDE.md` *and* `AGENTS.md`, the
 > committed `.curator-project`, syncing at both ends — are one checklist in
 > [§13d](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist), and
-> the app checks them for you: Context → a project → step ⑤ **Setup** shows one row per harness
+> the app checks them for you: **Projects → a project → Agents** shows one row per agent
 > with its status and its next step, and the four setup steps (Connect, Teach, Point it at this
-> project, Let it save once) in the reader ([§13e](#13e-the-setup-check-in-the-app)). What an agent
-> is handed at the start is step ④ **Session start**
+> project, Let it save once) in the reader ([§13e](#13e-the-setup-check-in-the-app)); **Connect an
+> agent** walks them in one flow. What an agent is handed at the start is the **Starting kit**
 > ([§7](#session-start-and-the-context-window)).
 > How to write the brief itself is [Writing a standing brief](#writing-a-standing-brief), below.
 
@@ -4996,8 +4649,8 @@ domains/<domain>/state/
   <project>/<scope>/<machine>/journal.jsonl  one line per save, append-only
 ```
 
-*(`<scope>` is the field's real name — the Project-context screen shows this as a **Handoff** row,
-since v3.65.1; [the vocabulary table](#the-word-on-screen-and-the-word-on-disk) has the
+*(`<scope>` is the field's real name — the Projects page calls it a **work-stream** (Pro's History
+column) and shows each one's note; [the vocabulary table](#the-word-on-screen-and-the-word-on-disk) has the
 full mapping between what you see on screen and what is actually on disk.)*
 
 **A domain holds many projects, as of v3.48.0.** A domain is where *knowledge* lives — one wiki,
@@ -5158,7 +4811,7 @@ This is the same commitment as [§1c](#1c-nothing-here-is-locked-to-one-ai-one-t
 
 ### What it does not do
 
-- **No handoff writing from the app.** The **Project context** rail slot *shows* the brief, the current handoff and the journal, and it will edit the **brief** — but the handoff and the journal are written by an agent over MCP and by nothing else. That is what keeps a handoff an honest record of what an agent observed, rather than a document two writers take turns on.
+- **No handoff writing from the app.** The **Projects** rail slot *shows* the brief, the current handoff and the journal, and it will edit the **brief** — but the handoff and the journal are written by an agent over MCP and by nothing else. That is what keeps a handoff an honest record of what an agent observed, rather than a document two writers take turns on.
 - **No rollups**, and no automatic Done/Decided/Blocked summary across work-streams or across projects.
 - **No migration.** A domain that had memory before v3.48.0 is read exactly where its files are. Moving them under a project folder is something you can do by hand; nothing does it for you, and nothing needs you to.
 - **No automatic capture.** Nothing forces a save at the end of a session; your agent is *guided* to save, not compelled. If a session ends without saving, the next read simply returns the **previous** state — stale, never corrupted, and nothing that was saved is lost. Saving overwrites and costs almost nothing, so the habit to build is **save early and save often**, not one big save at the end.
@@ -5394,16 +5047,16 @@ the app's own **Write a document** create, they never overwrite a mirror.
 Until v3.62.0 a bootstrap sent every document a session had not seen. That is right for four
 documents and wrong for twenty — a session then opens with twenty documents most of which have
 nothing to do with the work in front of it, and the reading budget starts dropping documents
-nobody chose to drop. So the choice is now yours, one flag per document, set from step ① of the
-Project-context screen:
+nobody chose to drop. So the choice is now yours, one start state per document, set in the
+**Starting kit** of the Projects page (Pro: the documents table's **At start** column):
 
 | What the agent is handed | Which documents |
 |---|---|
 | **The index** — every document's title, role, size and freshness | **Always. All of them. Every call.** Nothing suppresses it |
-| **The full text** | The ones you marked **read first** |
+| **The full text** | The ones you marked **Always read** (`read-first` on disk) |
 | **The full text, on request** | Everything else, the moment the agent asks for it by name |
 
-**Being "on request" is not being hidden**, and that distinction is written into the tools
+**Being "When needed" is not being hidden**, and that distinction is written into the tools
 themselves: an index row with no text is *a document waiting to be asked for, not one that is
 missing*. An agent that reported "this project has no decision log" while `decisions.md` sat in the
 index would have told you something false about your own project — so the tool description, the
@@ -5435,7 +5088,7 @@ the reading order.
 
 1. **`get_project_context`**, once, at the start of a session — the diagram above. It replaces the
    older two-step "read state, then separately go find the docs" and returns the brief, the latest
-   handoff, the full foundations **index**, and the text of whatever you marked read first — in one
+   handoff, the full foundations **index**, and the text of whatever you marked Always read — in one
    response.
 2. **`get_project_context` again with `slugs`**, whenever the work touches a document's subject:
    *"open `decisions.md` before we re-litigate this"*. It returns those documents whole, on top of
@@ -5448,28 +5101,20 @@ when you have asked it to** — write or update this document — in the same wa
 already required an explicit instruction for the standing brief. A session that reads foundations
 correctly all the way through never has to call it.
 
-**How the Foundations block reads, in the app.** Since v3.62.0 it is **step ①**, now called
-**Documents**, on the Project-context screen
-— the first thing on the page, above step ② *Memory* and its four rows (*Agent connections*,
-*Handoffs*, *The brief*, *Journal* — since v3.65.0 all built from the same
-instrument, and since v3.65.1 the "Last saved" row that used to lead them is gone) — and its own fold is closed
-by default like theirs. Its summary
-line reads *"N documents · M KB · fresh · 2 read first · 4 on request"*, or names how many are
-stale, unreachable from this machine, or Curator-authored, whichever applies. Each row in the
-opened table carries a **read first** control and a freshness dot on the same
-[app-wide scale](#the-freshness-dot-one-scale-everywhere) the rest of the screen uses; pressing a
-row opens that document in the [reader](#reading-a-handoff), the same right-hand panel a handoff or
-a wiki page opens in. **The read-first control works on a mirrored document as well as one kept
-here** — it changes The Curator's own index and never the document, so it cannot make the app a
-second writer of a file your repository owns. **As of v3.69.0** the block shows a **sources strip**
-listing every source the project draws from, each with its own Refresh; a source that is not
-reachable from this machine shows why in place of a working button, rather than offering a control
-that would fail.
+**How Documents read, in the app.** On the Projects page they are the **Starting kit**'s
+**Documents** row — *"9 documents · 2 always read, 7 when needed"* — with **Add**; in Pro, a table
+(**Document · Source · At start · Tokens · Updated**) whose **At start** cell is the picker. Pressing
+a document opens it in the [reader](#reading-a-handoff), the same right-hand panel a handoff or a
+wiki page opens in. **The start state works on a mirrored document as well as one kept here** — it
+changes The Curator's own index and never the document, so it cannot make the app a second writer
+of a file your repository owns. A source that is not reachable from this machine shows why in place
+of a working button, rather than offering a control that would fail. *(Until v4.3.0 this was step ①
+**Documents** of the Context page.)*
 
 **What this tier does not do.** Nothing selects which documents belong in a project automatically —
 you, or an agent you asked, decide what is canonical. Nothing summarises a document with an LLM on
-the way in or out — a foundation is stored and returned verbatim. **Read first / on request / not at
-start is always a choice you make or apply** — nothing changes a document's start state on its own;
+the way in or out — a foundation is stored and returned verbatim. **Always read / When needed /
+Hidden is always a choice you make or apply** — nothing changes a document's start state on its own;
 see *Suggest a reading plan*, below, for the one thing that proposes a plan for you to approve. A
 project with nothing marked behaves exactly as it did before v3.62.0 — every document, up to the
 budget. And refreshing a folder source still needs the checkout on the machine that has it; the
@@ -5479,28 +5124,29 @@ and only over MCP. The next section is what changed.)*
 
 #### Three start states, and "Suggest a reading plan" *(v3.65.2 → v3.67.0)*
 
-Since v3.65.2, every document in step ① Documents has one of **three** start states, not a
-two-way flag — the column is **At session start**:
+Since v3.65.2, every document has one of **three** start states, not a two-way flag — in Pro's
+documents table the column is **At start**. *(The words on screen changed in v4.3.0; on disk they
+did not.)*
 
 | State | What it means |
 |---|---|
-| **Read first** | Its text arrives with every session, within the reading budget (below) |
-| **On request** | Listed in the index; the agent opens it by name when the task needs it |
-| **Not at start** | Kept and mirrored, but not listed at session start at all — name it in the brief's *"Read before you…"* if an agent should still find it |
+| **Always read** *(was: read first)* | Its text arrives with every session, within the reading budget (below) |
+| **When needed** *(was: on request)* | Listed in the index; the agent opens it by name when the task needs it |
+| **Hidden** *(was: not at start)* | Kept and mirrored, but not listed at session start at all — name it in the brief's *"Read before you…"* if an agent should still find it |
 
-An agent that asks for a **not at start** document by name still receives it in full — the state
+An agent that asks for a **Hidden** document by name still receives it in full — the state
 only controls what is handed out automatically at the start of a session.
 
 **Suggest a reading plan** (v3.67.0) proposes a start state for every document, without changing
 anything until you approve it. Two ways to run it, side by side:
 
 - **Suggest (free)** needs no AI key. It follows your brief's *"Read before you…"* list (those
-  documents stay **on request**, because you have already said when to open them), each document's
+  documents stay **When needed**, because you have already said when to open them), each document's
   own role and size, and your reading budget — documents your brief marks as architecture,
-  decisions or conventions are proposed **read first** while they still fit the budget, and never
-  when a single one is larger than half of it; a stale roadmap over 64 KB is proposed **not at
-  start**; a document you already keep **not at start** stays there.
-- **✨ Suggest with AI** asks your [AI model](#ai-jobs-and-the-one-model) to read each document's
+  decisions or conventions are proposed **Always read** while they still fit the budget, and never
+  when a single one is larger than half of it; a stale roadmap over 64 KB is proposed **Hidden**; a
+  document you already keep **Hidden** stays there.
+- **✨ Suggest with AI** asks your [AI model](#ai-jobs-and-the-one-model-v3670) to read each document's
   title, role, size and opening lines — **never whole documents** — and shows what the run will
   cost before it runs and what it cost after. With no provider key the button is disabled and links
   to Settings → Providers & keys; the free arm always works regardless.
@@ -5518,8 +5164,8 @@ control stays off until at least one document is ticked.
 *New in v3.61.0.* Creating a project — **Domains → Projects → New project** — asks a second
 question, right below the brief: **where do this project's first documents come from?** This is a
 convenience for the moment of creation, not a lasting commitment — **since v3.69.0 it no longer
-decides what the project is allowed to hold**: whatever you pick here, both Add doors on step ①
-Documents stay open afterward, and you can add more written, copied or mirrored documents, from
+decides what the project is allowed to hold**: whatever you pick here, the Starting kit's add doors
+stay open afterward, and you can add more written, copied or mirrored documents, from
 any number of sources, at any time.
 
 | Choice | What happens | When to pick it |
@@ -5605,8 +5251,8 @@ names the reason: the project always exists after this action, never half of one
 
 An existing project with no foundations yet is not stuck with whatever you picked, or did not pick,
 at creation — the same two-way choice (Curator-kept or mirrored; "decide later" makes no sense once
-you are already looking at the empty block) is offered again from the **Foundations** block on the
-Project-context screen, the moment you open it and it finds no manifest.
+you are already looking at the empty block) is offered again from the Starting kit's **Documents** on the
+Projects page, the moment you open it and it finds no manifest.
 
 **What a skeleton actually is.** Not a template you fill in blanks of — a real markdown document,
 with real `##` headings, whose first line is a visible banner: *"Skeleton — not yet written. Answer
@@ -5665,8 +5311,8 @@ was exactly one: asking an agent to write it.
 
 | Way in | What actually happens | When to use it |
 |---|---|---|
-| **Add from this computer** (step ①'s head row) | Tick documents from a folder scan and either copy them in once, or keep the folder in sync — your choice, appended to what is already there | You are adding one or more existing files, from anywhere on this computer |
-| **Add from GitHub** (step ①'s head row) | Tick documents found in a GitHub repository and mirror them in, appended to what is already there | The document already lives in a repository you want The Curator to keep re-reading from |
+| **Add from this computer** (Starting kit → Documents → **Add**) | Tick documents from a folder scan and either copy them in once, or keep the folder in sync — your choice, appended to what is already there | You are adding one or more existing files, from anywhere on this computer |
+| **Add from GitHub** (Starting kit → Documents → **Add**) | Tick documents found in a GitHub repository and mirror them in, appended to what is already there | The document already lives in a repository you want The Curator to keep re-reading from |
 | **Choose a file…**, inside **Write a document**'s editor | Read from your disk into the editor, shown to you, saved only when you press **Save** — a kept copy from here on, with no source to refresh from | You want to review or trim the text before it is saved, not just copy it in whole |
 | **An agent's commissioned save** | An agent writes or updates it with `save_foundation`, **only when you ask** — works in any project, including one that mirrors, as long as the slug is new | You want an agent to draft or fill the document from what you've just discussed, rather than typing or pasting it yourself |
 
@@ -5724,8 +5370,8 @@ Haiku often re-read anyway, and often failed to reach the tool at all. None of t
 other tool's next step; they read it as a record and asked. **If your tool doesn't re-read, start
 a new conversation** — a new one always reads first.
 
-**Copy agent instructions**, beside **Copy marker line** in Domains → Projects (and on the Project
-context screen), puts that block on your clipboard with this project's names already in it. Paste it
+**Copy agent instructions**, beside **Copy marker line** in Domains → Projects (and in the **"···"** menu
+of the Projects page, and step 3 of its connect checklist), puts that block on your clipboard with this project's names already in it. Paste it
 into whichever of these your tool reads:
 
 | Your tool | Paste it into | Watch out for |
@@ -5739,9 +5385,9 @@ into whichever of these your tool reads:
 | GitHub Copilot CLI | its own instructions file | it reads `CLAUDE.md` and `GEMINI.md` too |
 | Zed | **`.rules`**, else `AGENTS.md`, else `CLAUDE.md` | **first match wins.** In a repository that has an `AGENTS.md`, a block in `CLAUDE.md` is never read |
 
-Unsure which applies to you? The app's **Setup** step (Context → the project → step ⑤ →
-**Repository on this computer** *(Pro)*, [§13e](#13e-the-setup-check-in-the-app)) lists each file your
-harnesses read, and whether the block is there, current and at the top; press one to read it.
+Unsure which applies to you? The app's **Agents** tab (Projects → the project → Agents,
+[§13e](#13e-the-setup-check-in-the-app)) checks each file your harnesses read — whether the block
+is there, current and at the top — and raises a notice for any that is not; press the file to read it.
 In a terminal, **`my-curator doctor`** ([§13c](#13c-making-capture-real--the-command-the-hooks-and-the-meter))
 reports the same for the file your harness will actually read on this machine.
 
@@ -5866,8 +5512,8 @@ so in one line when it finds itself inside the app with no `my-curator` on your 
 > yourself; if something else already answers to it, the same command **refuses** and tells you what
 > it found.
 
-**Start with `doctor`** — or, without a terminal, with the app's **Setup** step (Context → a project
-→ step ⑤, [§13e](#13e-the-setup-check-in-the-app)), which shares `doctor`'s file checks. `doctor` is
+**Start with `doctor`** — or, without a terminal, with the app's **Agents** tab (Projects → a project
+→ Agents, [§13e](#13e-the-setup-check-in-the-app)), which shares `doctor`'s file checks. `doctor` is
 read-only, it always exits successfully, and it answers the questions that otherwise take an
 afternoon:
 
@@ -5985,107 +5631,35 @@ a teammate without `my-curator` on their `PATH` would otherwise experience your 
 
 ### The meter: did the session read, and did it save?
 
-Project context → step ② **Memory** carries this reading as its **first** row, **Agent connections**
-(called **Capture** through v3.69.0, then **Agent sessions** through v3.73.x) — the question this
-whole layer exists for is answered without opening anything but that one fold.
-
-**Two renames, and what the row does and doesn't count.** "Capture" described the mechanism;
-"Agent sessions" (v3.70.0) described what you read off the row as *sessions* — but what the log
-actually counts is **one bridge process**, not one conversation, and calling that a "session"
-invited exactly the wrong reading: a Claude Desktop app kept open across a whole day of separate
-chats is one process, so it logged as *"1 of 1 sessions"* even on a day with thirty conversations
-through it, while Claude Code — which starts a fresh process per run — logged each one honestly.
-**"Agent connections" (v3.74.0) is the accurate word for the same count**: how many agent
-*connections* reached this project through the my-curator MCP, whether they read the context first,
-and whether they saved before stopping. The on-disk word is unchanged (the route is still
-`…/capture`, the store function is still `captureFacts`), exactly as v3.65.1 kept **foundations**
-and **working state** on disk under the screen's own **Documents** and **Memory**. It counts only
-connections that reached this project **through the MCP bridge**: a session started by the
-SessionStart **hook**, or by `my-curator context` at the command line, reads the context without
-ever calling `get_project_context` over MCP, so it is **not counted** here, and a zero row can be an
-honest answer even on a project you use every day. A one-line explanation sits under the row
-whenever the count is zero, so a quiet number never reads as "nothing is happening" when the truth
-is "nothing here goes through the bridge."
-
-**And, since v3.74.0, the window it claims is the window the log actually covers, not a fixed
-30 days.** A log that only reaches back five days now reads *"6 connections in the last 5 days (the
-log begins 20 Sep)"*, rather than silently implying it watched the full 30-day span it did not have
-data for; a log old enough to cover the whole window still reads the plain *"in the last 30 days"*.
-
-![The Memory step of the demo project's Project context view with its Agent connections row open. The row's summary reads '8 connections in the last 5 days (the log begins 20 Sep) · 8 started with the context · 7 saved before stopping · 1 read and did not save'. Inside, a recessed monospace panel: CONNECTIONS 8 (in the last 5 days), STARTED WITH THE CONTEXT 8 of 8 and SAVED BEFORE STOPPING 7 of 8, each with a small bar, READ AND DID NOT SAVE 1 marked in the warning tone, TOOL CALLS 22, and NEWEST 8 min ago with claude-code beneath. Below it the line 'Saves by tool, last 7 days: Claude Code 4 · Antigravity 3', then closed rows for Handoffs, The brief and Journal · claude-code, and step 3, Knowledge, with the early-computing and night-sky rows.](images/curator-capture-meter.png)
-
-*As of v3.65.0, this row became one row among the other four, not a card sitting above a separate
-"Sessions" fold. **As of v3.65.1 its body dropped the per-session table entirely** — the maintainer's
-own reading was that a row plus a table plus a floating ⓘ was three designs answering one question —
-and the six facts the table used to carry now live as six monitor lines, so nothing measured is
-lost, only the table's own per-connection rows. The ⓘ that used to float alone above the table moved
-out of the row altogether, into the step's own ⓘ beside its title. The route's own disclosures (the
-pre-session-id count, the excluded self-test calls, and — further down — the note about a bridge
-that logged saves with no session) stay outside the row, unfolded, because a note about what the
-meter cannot see is exactly
-the kind of thing the standing rule says must never sit behind a chevron: a warning, a cost or an
-outcome is never one click further away than the row it qualifies. **As of v3.70.0 the row itself was
-titled Agent sessions, and as of v3.74.0 it is titled Agent connections**, for the reason above.*
+**Where it is (v4.3.0):** Pro's **History** tab, as a small **Agent connections** table above the
+saved notes — one plain row, *"11 agent connections · 7 read this project at the start · 11 saved
+before stopping · 1 read and did not save"*, and a **Saves by harness** row for the last 7 days.
+Pro's header tile **Saves** counts the same 7 days. *(It was the first row of step ② Memory —
+called **Capture** through v3.69.0, **Agent sessions** through v3.73.x, then **Agent connections** —
+and is no longer on a Simple tab: it is a reading, never a warning.)*
 
 **Three words, defined once so the reading cannot be misread:**
 
 | | |
 |---|---|
-| **A connection** | **One bridge process** — one run of your agent harness with The Curator connected. Not a conversation, not a day — one Claude Desktop process can carry many conversations, which is exactly why the row no longer calls this "a session" |
-| **Started with the context** | That connection asked for this project's brief and state, at some point before its first save. Not necessarily as its very first call — an agent that lists projects first and bootstraps second has still bootstrapped |
+| **A connection** | **One bridge process** — one run of your agent harness with The Curator connected. Not a conversation, not a day — one Claude Desktop process can carry many conversations, which is exactly why this is not called "a session" |
+| **Read this project at the start** | That connection asked for this project's brief and state at some point before its first save. Not necessarily as its very first call |
 | **Saved before stopping** | A save succeeded. A *refused* save is not a save |
 
 **The uncomfortable number is the one in plain words.** *"2 read and did not save"* is two
-connections that had everything and wrote nothing back — and it is printed as a count, in words,
-never as a percentage or a bar, because *"67%"* reads as a grade while *"2 read and did not save"*
-reads as two connections you could go and look at.
+connections that had everything and wrote nothing back — and it is a count, in words, never a
+percentage, because *"67%"* reads as a grade while *"2 read and did not save"* reads as two
+connections you could go and look at.
 
-**Three states, told apart rather than blurred:**
-
-| What you see | What it means |
-|---|---|
-| *"no usage log on this computer yet"* | Nothing has used the bridge here. Not a failure |
-| *"no agent connection in the last 30 days"* (or the true-window wording above, when the log is younger) | There is a log, and no connection for **this project** in the window. Also not a failure |
-| *"6 connections in the last 30 days"* | The real reading, with its breakdown underneath |
-
-Only the third carries a freshness dot, and **that dot is the age of the newest connection** — not a
-grade for the ratio. A reading and a judgement are different things, and the app does not dress one
-as the other.
-
-**What the meter cannot see, stated on the screen and not only here.** It counts what went through
-the **bridge**. A save made with `my-curator save`, or by an agent that never connected, leaves no
-line — so it neither helps nor hurts the figures, and a session that never opened the bridge is not
-in the denominator either. And a session that **opened** the bridge but never landed a real tool
-call still writes nothing but its session line, which is exactly what the 2026-09-20 measurement
-ran into: one whole arm recorded zero sessions not because four sessions failed to save, but
-because no session ever reached the bridge at all. The **harness** named beside the newest session is **self-reported** by the client and nothing in
-The Curator branches on it: it labels the reading and does nothing else. Calls made before v3.63.0 have no
-session id, so they are counted separately (*"412 lines predate session ids and are not counted"*)
-rather than being invented into sessions. And the app's own *Test all 24 tools* run is excluded
-outright — pressing a button on a Settings screen must never report a session that read and saved.
-
-**Nothing here stops a session.** The meter reports; it never refuses, delays or blocks anything.
-
-**A fifth state, added in v3.64.1: saves with no sessions to show for them.** A bridge process can
-log saves without ever writing a session line — the exact shape of a Claude Desktop bridge kept
-alive across an app update, still serving old code, which is what a bridge running since 2026-09-18
-did to a maintainer's own reading on 2026-09-20: the strip read *"no session in the last 30 days"*
-beside a save from 47 minutes earlier, which looked like a contradiction rather than what it was.
-The route now carries `newestSaveAt` — the newest save's **file** clock, kept apart from the
-session reading's own clock — and, when the window holds saves but zero sessions, a `note` under
-the readout: *"Saves in this window arrived through a bridge that logged no sessions — restart the
-app that launched it (usually Claude Desktop)."* The note is dropped whenever `noSessionsButSaves`
-is false, so a genuinely quiet project still reads as quiet.
-
-**v3.65.1 gates the same note a second way, on the usage log's own presence.** The route's
-"stale bridge" note is computed from the project's OWN save history, independent of whether a usage
-log exists at all — so on a computer with no usage log but a recent save on disk, the route named a
-bridge that had logged no sessions and told you to restart it, a remedy for a bridge that had never
-run, sitting beside a summary already saying the log does not exist. The view now withholds that one
-note when there is no log at all: with no log, the row's own summary (*"no usage log on this
-computer yet"*) is the whole answer. The note's other cases — the log exists but predates this
-project's usage entirely, or carries calls too old to have a session id — are unaffected by this
-gate and still render exactly as the route sends them.
+**What the meter cannot see.** It counts what went through the **bridge**. A save made with
+`my-curator save`, by a hook, or by hand leaves no connection line — a session started by the
+SessionStart **hook** or by `my-curator context` reads the context without calling
+`get_project_context` over MCP, so a zero can be an honest answer even on a project you use every
+day. The **harness** name is **self-reported** by the client and nothing in The Curator branches on
+it. Calls made before v3.63.0 have no session id and are counted separately rather than invented
+into connections. The app's own **Test all 24 tools** run is excluded outright. The log lives beside
+your settings, content-free, never synced. **Nothing here stops a session** — the meter reports; it
+never refuses, delays or blocks anything.
 
 > The same reading is available from the terminal (`my-curator doctor`) and as a per-harness matrix
 > row (`node scripts/measure-harness.js --harness claude-code --since <date>`), from the same
@@ -6136,9 +5710,10 @@ setup; three are habits. Everything here is described in more depth elsewhere in
 each row links to the full text.
 
 **You no longer have to check these by hand.** Since v3.77.0 the app checks most of them for one
-project on one computer: **Context → a project → step ⑤ Setup**
-([§13e](#13e-the-setup-check-in-the-app)). The checklist's last column says where Setup shows each
-row. `my-curator doctor` is the terminal version of the same check (source install only).
+project on one computer: **Projects → a project → Agents** (until v4.3.0, step ⑤ *Setup* of the
+Context page — [§13e](#13e-the-setup-check-in-the-app)). The checklist's last column says where the
+app shows each row. **Connect an agent**, the header's primary button, walks rows 2–4 and 8 for one
+agent in one flow. `my-curator doctor` is the terminal version of the same check (source install only).
 
 ### What travels between your computers, and how
 
@@ -6177,17 +5752,17 @@ flowchart LR
 ② The **project's own git** carries the code and the files in the project folder. ③ Everything a
 tool needs on a computer is set up **on that computer**, once per computer.*
 
-| What | Where it lives | How it reaches your other computer | What you do | What Setup shows if it's missing |
+| What | Where it lives | How it reaches your other computer | What you do | What the app shows if it's missing |
 |---|---|---|---|---|
-| A project's **brief, handoffs, journal and Documents** | Your knowledge folder (`domains/<domain>/state/<project>/`) | ① Personal Sync | **Sync now** (the **Sync** icon in the rail) — before you start, and after the last save | On the other computer: *"‹computer› saved a newer handoff; it's waiting in your Personal Sync on GitHub."* with a **Sync now** button, once the app's last check of GitHub has seen it. On this computer, the **Computers** fold counts files *"here not on GitHub yet"* |
+| A project's **brief, handoffs, journal and Documents** | Your knowledge folder (`domains/<domain>/state/<project>/`) | ① Personal Sync | **Sync now** (the **Sync** icon in the rail) — before you start, and after the last save | On the other computer: *"‹computer› saved a newer handoff; it's waiting in your Personal Sync on GitHub."* with a **Sync now** button, once the app's last check of GitHub has seen it. On this computer, the **Agents** tab says *"N files are only on this computer"* with **Sync now** |
 | **Wiki pages, chat conversations, domain schemas, Health dismissals** | Your knowledge folder (`domains/`) | ① Personal Sync — the same **Sync now** | The same | Not a Setup check — the **Sync** badge counts what is not on GitHub yet |
 | Your **source files** (`raw/`: the PDFs and text files you ingested) | Your knowledge folder | **Never synced** — they stay on the computer you ingested on | Copy them yourself if you need them elsewhere | — |
 | **The code**, **`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`**, and **`.curator-project`** | The project folder (a git clone) | ② The project's own git | Commit and `git push` here; `git pull` there (the first time, `git clone`) | *"AGENTS.md in ‹folder› has no Curator instructions…"* · *"‹folder› has no .curator-project…"* · *".curator-project isn't committed…"* · *"…is committed but not pushed"* |
-| **Where the project folder is** on this computer | This computer's app settings | ③ Nothing — the path differs per computer | Setup (step ⑤) → **Use** a folder it found, or **Choose the folder** | The SETUP tile reads *repository not set*; a moved or deleted folder reads *"‹folder› isn't on this Mac."* |
-| **Each tool's MCP entry** | That tool's own config file (for example `~/.claude.json`, `~/.gemini/config/mcp_config.json`) | ③ Nothing | **Settings → MCP bridge → Agent harnesses → Install for me** (Claude Desktop, Cursor, Antigravity, on a Mac; Claude Desktop on Windows), or **Copy MCP entry** in that tool's setup guide (Setup → the tool's row), paste, restart the tool | The tool's row is not **ready**, and step ① of its guide reads *to do*. A to-fix line when the file is empty, not valid JSON or can't be opened, or the entry points at another knowledge folder or a missing file |
+| **Where the project folder is** on this computer | This computer's app settings | ③ Nothing — the path differs per computer | **Agents** → **Use** a folder it found, or **Choose another folder** (Pro: **Computers** → **Set the folder** / **Change folder**) | The Agents tab asks *"Where is ‹project›'s code on this Mac?"*; a moved or deleted folder reads *"‹folder› isn't on this Mac."* |
+| **Each tool's MCP entry** | That tool's own config file (for example `~/.claude.json`, `~/.gemini/config/mcp_config.json`) | ③ Nothing | **Projects → Connect an agent** (it uses **Install for me** where it can: Claude Desktop, Cursor, Antigravity on a Mac; Claude Desktop on Windows), or **Copy MCP entry** in that agent's setup steps (Agents → its row), paste, restart the tool | The agent's row is not **Ready**, and step ① of its guide reads *to do*. A to-fix line when the file is empty, not valid JSON or can't be opened, or the entry points at another knowledge folder or a missing file |
 | **The two skills** (`my-curator`, `curator-continuity`) | The tool's skills folder — or, for the Claude app, your Claude account | ③ Nothing (skills uploaded to your Claude account follow the account) | Download the two `.zip` files from step ② of the tool's setup guide and unzip them into the tool's skills folder (for the Claude app, upload them to your account) | *"‹tool›'s … skill is older than the copy this app carries"* · *"‹tool› has the … skill but not …"* · *can't check here* for skills held by your Claude account |
 | **Hooks** (optional) | The tool's hook settings | ③ Nothing | `my-curator install-hooks <tool>` on each computer (source install) | The row's hooks mark reads *not wired (optional)* — never a to-fix line |
-| **Agent harnesses you added** to Setup, and ones you named yourself | This computer's app settings | ③ Nothing | **+ Add an agent harness** again on the other computer | The harness is simply not listed there |
+| **Agent harnesses you added** to Setup, and ones you named yourself | This computer's app settings | ③ Nothing | **+ Add an agent harness** (or **Connect an agent**) again on the other computer | The harness is simply not listed there |
 | **API keys, the Personal Sync connection, app settings** (Window, Your harness's share, the Pro switch, the menu bar icon) | This computer's app settings (`.curator-config.json`, `.sync-config.json`) | ③ Nothing | Enter the key and connect Sync once per computer ([§15](#setting-up-a-second-or-third-computer)) | — (not a Setup check) |
 
 #### A day with two computers
@@ -6202,39 +5777,37 @@ tool needs on a computer is set up **on that computer**, once per computer.*
    newest handoff — the one Mac A just saved — and should say it came from another machine.
 6. **Mac B, when you stop.** Step 3 again. Next time on Mac A, start from step 1.
 
-**Common mistakes, and what Setup shows for each:**
+**Common mistakes, and what the Agents tab shows for each:**
 
-| Mistake | What happens | What Setup shows |
+| Mistake | What happens | What the app shows |
 |---|---|---|
-| No **Sync now** on Mac A after the last save | Mac B's agent opens an older handoff | Nothing on Mac B — the handoff never reached GitHub. Mac A's **Computers** fold counts files *"here not on GitHub yet"* |
+| No **Sync now** on Mac A after the last save | Mac B's agent opens an older handoff | Nothing on Mac B — the handoff never reached GitHub. Mac A's **Agents** tab says *"N files are only on this computer"* |
 | No **Sync now** on Mac B before starting | Same: an older handoff | On Mac B: *"‹Mac A› saved a newer handoff; it's waiting in your Personal Sync on GitHub."* with **Sync now** |
 | Instructions pasted into `AGENTS.md` on Mac A, but not committed and pushed | Mac B's copy has no instructions; its tool doesn't know the project and may save under another tool's scope | On Mac B: *"AGENTS.md in ‹folder› has no Curator instructions…"*. On Mac A, the file's reader says *"Not committed to the project's git yet."* |
 | `.curator-project` created but not committed (or not pushed) | Agents and hooks on Mac B can't tell which project the folder is | On Mac A: *"…isn't committed…"* or *"…is committed but not pushed"*. On Mac B: *"‹folder› has no .curator-project…"* |
 | No `git pull` on Mac B | Mac B keeps the old instruction files and marker | The same lines as the two rows above, until you pull |
 | Expecting **Sync now** to bring `CLAUDE.md` or `AGENTS.md` | It never will — those travel by the project's git | The same *"no Curator instructions"* line |
-| The tool, its skills or its MCP entry never set up on Mac B | The agent on Mac B has no Curator tools, or older skills | On Mac B: the tool's row is not **ready**; its setup guide shows which step is left |
+| The tool, its skills or its MCP entry never set up on Mac B | The agent on Mac B has no Curator tools, or older skills | On Mac B: the agent's row is not **Ready**; its setup steps show which step is left |
 
-The **Setup** step (Context → a project → step ⑤, [§13e](#13e-the-setup-check-in-the-app)) says the
-three routes once, at its foot, each with its small grey glyph: handoffs, the brief and Documents by
-**Sync now**; the agent instructions and `.curator-project` by your project's git; steps 1 and 2 set
-up on each computer. In Pro each of its three folds also carries a grey tag naming its route:
-**Agent harnesses** — *set up on each computer*, **Repository on this computer** — *project's git*,
-**Computers** — *Personal Sync*.
+**The three routes, in the app.** Pro's **Computers** tab carries them as a table — **What ·
+Travels by** — Notes, the brief, documents and the wiki: **Sync now**; the instruction file and
+`.curator-project`: **your project's git**; the agent connection, skills and hooks: **set up on each
+computer** ([§13e](#13e-the-setup-check-in-the-app)).
 
 ### The checklist
 
-| # | Do this | When | How | How to check | Where Setup shows it |
+| # | Do this | When | How | How to check | Where the app shows it |
 |---|---|---|---|---|---|
-| 1 | **The latest Curator on every computer** | After every release | Settings → **Updates**, beside the version at the foot of the Settings list — it opens **Software update** and runs the check. Then quit and reopen each agent harness, so none keeps an old bridge process running | The version at the foot of Settings reads the same on every computer. **Settings → MCP bridge** warns if a client still has a bridge from before the update | **Computers** fold: the Curator version each computer last saved with (*not recorded* for a save made before v3.77.0) |
-| 2 | **The Curator's MCP configured in every agent harness** | Once per tool, per computer (again if the app or your knowledge folder moves) | Claude Desktop, Cursor, Antigravity (Mac): **Settings → MCP bridge → Agent harnesses → Install for me**. Other harnesses: **+ Add an agent harness** in Setup, then **Copy MCP entry** in its guide (or **Copy** on its row in Agent harnesses), pasted into that tool's file (below) | Ask the agent to list its `my-curator` tools — all 24 should be there | The harness's row (in Pro, the **Agent harnesses** fold: **MCP** mark, and step ① of its guide. A to-fix line for a broken file or a stale entry |
-| 3 | **Both skills, current, in every agent harness** | Once per tool, per computer — and again after every release that changes a skill | Download the two `.zip` files from step ② of the tool's guide, or copy the whole `skills/my-curator/` and `skills/curator-continuity/` folders, to where that tool reads skills (below) | Ask *"what skills are available?"* | **Agent harnesses** fold *(Pro)*: the row's **skills** mark, and step ② of its guide. A to-fix line when a skill is older than the app's copy, or one of the two is missing; *can't check here* for skills held by your Claude account |
-| 4 | **The Copy agent instructions block at the TOP of both `CLAUDE.md` and `AGENTS.md`** | Once per project repository — and again after a release that changes the block | **Copy agent instructions** for **this** project (Project context's header, or **Copy instructions** in Setup), paste at the very top of each file, then commit and push | The agent's first reply names the rules from your brief | **Repository on this computer**: each file's state — *block current · at the top*, *no Curator block*, *names ‹other project›*, *block outdated*, *block past what it reads*. Press a file to read it, block framed |
-| 5 | **Commit `.curator-project`** | Once per project repository | **Copy marker line**, into a file named `.curator-project` at the repository root; commit and push it. Setup's to-fix line hands you one command that does all three | `git ls-files .curator-project` prints the name | **Repository on this computer**: *names ‹project› · committed and pushed*, or a to-fix line — missing, names another project, not committed, not pushed |
-| 6 | **Sync now before you start, and after your last save** | Every session, on every computer | **Sync** in the rail → **Sync now** | The Sync view shows no *"local changes not pushed"* after your last save | **Computers** fold: *"N files here not on GitHub yet"* on this computer's row; a to-fix line when another computer's newer handoff is waiting on GitHub |
+| 1 | **The latest Curator on every computer** | After every release | Settings → **Updates**, beside the version at the foot of the Settings list — it opens **Software update** and runs the check. Then quit and reopen each agent harness, so none keeps an old bridge process running | The version at the foot of Settings reads the same on every computer. **Settings → MCP bridge** warns if a client still has a bridge from before the update | **Computers** tab *(Pro)*: the Curator version each computer last saved with (*not recorded* for a save made before v3.77.0) |
+| 2 | **The Curator's MCP configured in every agent harness** | Once per tool, per computer (again if the app or your knowledge folder moves) | **Projects → Connect an agent** — **Install for me** for Claude Desktop, Cursor, Antigravity (Mac; Claude Desktop on Windows). Other harnesses: **Copy MCP entry** in its setup steps, pasted into that tool's file (below) | Ask the agent to list its `my-curator` tools — all 24 should be there | The agent's row on **Agents** (Pro: the **Connected** column), and step ① of its guide. A notice for a broken file or a stale entry |
+| 3 | **Both skills, current, in every agent harness** | Once per tool, per computer — and again after every release that changes a skill | Download the two `.zip` files from step ② of the tool's guide, or copy the whole `skills/my-curator/` and `skills/curator-continuity/` folders, to where that tool reads skills (below) | Ask *"what skills are available?"* | The agent's row on **Agents** (Pro: the **Skills** column), and step ② of its guide. A notice when a skill is older than the app's copy, or one of the two is missing; *can't check here* for skills held by your Claude account |
+| 4 | **The Copy agent instructions block at the TOP of both `CLAUDE.md` and `AGENTS.md`** | Once per project repository — and again after a release that changes the block | **Copy agent instructions** for **this** project (the Projects page's **"···"** menu, the connect checklist, or **Copy instructions** in an agent's steps), paste at the very top of each file, then commit and push | The agent's first reply names the rules from your brief | **Agents** (Pro: the **Instructions** column): a notice per file in trouble — *no Curator block*, *names ‹other project›*, *block outdated*, *block past what it reads*. A file opens in the reader, block framed |
+| 5 | **Commit `.curator-project`** | Once per project repository | **Copy marker line**, into a file named `.curator-project` at the repository root; commit and push it. Setup's to-fix line hands you one command that does all three | `git ls-files .curator-project` prints the name | **Agents**: a notice when it is missing, names another project, is not committed or not pushed; Pro's **Computers** tab lists the repository files checked |
+| 6 | **Sync now before you start, and after your last save** | Every session, on every computer | **Sync** in the rail → **Sync now** | The Sync view shows no *"local changes not pushed"* after your last save | **Agents**: *"N files are only on this computer"* with **Sync now**; a notice when another computer's newer handoff is waiting on GitHub. Pro: **Computers** → *Not sent* |
 | 7 | **Pull and push the project's code** | Every session | `git pull` before you start, commit and `git push` when you stop | `git status` is clean and not behind | Only for `.curator-project` (row 5). The rest of the code is yours to check |
-| 8 | **Start a new conversation, or say "continue"** | Every time you switch tool or computer | A new conversation always reads first. Since v3.76.1 the block also tells an open one to read again on *"continue"* or *"resume"* | The agent's reply says which handoff it opened, from which tool and machine | Not checked. A tool's row reads **ready** only after it has saved this project from this computer |
-| 9 | *Optional:* **hooks** | Once per tool, per computer | `my-curator install-hooks claude-code` · `my-curator install-hooks antigravity` | `my-curator hook-log` lists every hook run. Antigravity's session-start hook was seen running once, on the maintainer's Mac, on 2026-09-26; its end-of-session save ask has **not** been observed | **Agent harnesses** fold *(Pro)*: the row's **hooks** mark — *not wired (optional)*, never a to-fix line |
-| 10 | **Check it** | After any setup change | **Re-check** in Setup (it also re-checks by itself when you come back to the window). In a terminal: `my-curator doctor` in the project folder | Setup shows rows 1–6 and 9 for this computer; `doctor` reads rows 2–5 and 9 | Rows 7 (beyond the marker) and 8 stay yours |
+| 8 | **Start a new conversation, or say "continue"** | Every time you switch tool or computer | A new conversation always reads first. Since v3.76.1 the block also tells an open one to read again on *"continue"* or *"resume"* | The agent's reply says which handoff it opened, from which tool and machine | Not checked. An agent's row reads **Ready** only after it has saved this project from this computer |
+| 9 | *Optional:* **hooks** | Once per tool, per computer | `my-curator install-hooks claude-code` · `my-curator install-hooks antigravity` | `my-curator hook-log` lists every hook run. Antigravity's session-start hook was seen running once, on the maintainer's Mac, on 2026-09-26; its end-of-session save ask has **not** been observed | Pro's **Agents** table: the **Hooks** column — never a to-fix notice |
+| 10 | **Check it** | After any setup change | **Check again** on the Agents tab (it also re-checks by itself when you come back to the window). In a terminal: `my-curator doctor` in the project folder | The app shows rows 1–6 and 9 for this computer; `doctor` reads rows 2–5 and 9 | Rows 7 (beyond the marker) and 8 stay yours |
 
 ### Each step, in a little more detail
 
@@ -6246,8 +5819,8 @@ scope. A computer still on an older version plays by the older rules. After an u
 reopen each agent harness: a bridge that was already running keeps running the old code
 ([§16, Version and updates](#version-and-updates)).
 
-**2 — The MCP, per tool.** On a Mac, **Settings → MCP bridge → Agent harnesses → Install for me**
-writes the entry for **Claude Desktop, Cursor and Antigravity** for you (preview first, original
+**2 — The MCP, per tool.** On a Mac, **Projects → Connect an agent** (or **Settings → MCP bridge →
+Agent harnesses → Install for me**) writes the entry for **Claude Desktop, Cursor and Antigravity** for you (preview first, original
 kept, one-click **Remove** and **Restore original** — see [what it writes](#connecting-your-tools-install-for-me-v3850)).
 On Windows it does the same for **Claude Desktop only** (new in v3.86.0; it refuses and tells you
 why when it cannot tell which settings file is the live one). For every other tool, or on Linux, copy the entry and paste it in yourself: the snippet is in
@@ -6323,7 +5896,7 @@ session, add `--scope <name>` to the `my-curator hook …` commands in that tool
 (not to `install-hooks`, whose own `--scope` chooses which settings file to write).
 `install-hooks` needs the `my-curator` command, which comes from a source install, not the Mac app.
 
-**10 — Check it.** In the app: **Context → the project → step ⑤ Setup**, and **Re-check** after a
+**10 — Check it.** In the app: **Projects → the project → Agents**, and **Check again** after a
 change ([§13e](#13e-the-setup-check-in-the-app)). It reads, for this project on this computer, every
 row above except 7 and 8, and hands you a fix for each thing that is wrong. In a terminal:
 `my-curator doctor`, read-only and always safe to run. In the project folder it tells you which
@@ -6363,96 +5936,94 @@ a source install (`npm link` puts it on your `PATH`); the Mac app does not ship 
 
 ## 13e. The Setup check in the app
 
-*New in v3.77.0; redesigned in v3.78.0; made understandable in v3.79.0; "+ Add a tool" made usable,
-with removal, in v3.80.0; a simple view, one row per agent harness, in v4.2.0.*
+*New in v3.77.0 as step 5 "Setup"; one row per agent harness in v4.2.0; since v4.3.0 the
+**Agents** tab of the Projects page.* The check is the same; where it lives and how it looks
+changed.
+
+> **The Agents tab, in one sentence:** *the agents that can open this project's notes* — and, for
+> each one, whether it can reach this project from this computer, and the one thing to do if not.
 
 **What an agent harness is.** The app your agent runs in — Claude Code, Claude Desktop, Codex,
-Cursor, Antigravity, opencode and the like. The step says *agent harness* (and the gloss the first
-time) because one project can be worked on by several harnesses at once, on one computer or on
-several, and Setup's job is to tell you, for each one, whether it can reach this project from this
-computer. *Tools*, in The Curator, means only the 24 My Curator tools an agent calls.
+Cursor, Antigravity, opencode and the like. Simple headings say **agent**; Pro's table and this
+guide say **harness** where precision matters, because one project can be worked on by several
+harnesses at once, on one computer or on several. *Tools*, in The Curator, means only the 24 My
+Curator tools an agent calls.
 
-### The simple view — one row per harness *(v4.2.0)*
+### The Agents tab — one row per agent
 
-With Pro off ([§7c](#7c-simple-and-pro)), step 5 is a short list, top to bottom:
+**Projects → a project → Agents.** Top to bottom:
 
-1. **Any warning about the whole project**, loud and unfolded, with its own buttons — for example
-   *"Where is ‹project›'s code on this Mac?"* with **Use ‹folder›** and **Choose another folder**,
-   or a newer handoff waiting on GitHub with **Sync now**. A warning about one harness is not here:
-   it is that harness's row.
-2. **One row per agent harness**, each with **one status and one action**:
+1. **A toolbar**: when this computer was last checked, **Check again**, and the menu that adds a
+   harness (**+ Add an agent harness**, [below](#adding-a-harness)).
+2. **One row per agent harness**, each with **one status chip** and **at most one action**:
 
    | Status | When | The row's action |
    |---|---|---|
-   | **Needs a fix** | Something about this harness is wrong (an outdated skill, a stale MCP entry, missing agent instructions…) | That fix's first button (for example **Download my-curator.zip** or **Copy instructions**); the row says the problem in full, word for word as Pro does, and when there are more fixes, *"the other fixes are in its steps"* |
-   | **Not on this computer** | It saved this project from another computer, and is not connected here | **Set up here** |
-   | **N steps left** | Nothing is broken, but some of the four steps are not done | **Continue setup**, with *"Next: …"* naming the step |
+   | **Needs you** | Something about this harness is wrong (an outdated skill, a stale MCP entry, missing agent instructions…), or it is connected here and has steps left | That fix's first button (for example **Download my-curator.zip** or **Copy instructions**), or **Open its steps** |
+   | **Not connected** | Not set up on this computer — it saved this project from another computer, or it has steps left and is not connected here | **Set up here** / **Continue setup**, or **Open its steps** |
    | **Ready** | Connected here, reads the agent instructions, and has saved this project from this computer | none |
+   | **Working** | The check is running (*"Checking this computer…"*) | — |
 
-   The number on a row is the number its reader opens on (*"N steps to do"*); a **Needs a fix** row
-   says it as *"N steps left in all"*. A step The Curator **can't check** on this computer is never
-   counted as done: when it is the only thing left (Claude Code's skills, held by your Claude
-   account), the row says **Ready** with the grey line *"skills can't be checked here"*, and the
-   reader says *"Nothing left to do here; skills can't be checked here"*.
+   Under the name, one line: the first problem in words when there is one, otherwise how many steps
+   are left and the next one, or when it last saved and from which computer (*"saved 2 hours ago on
+   this Mac"* — a computer is shown by its **name**, never by its folder id such as
+   `studio-mac-aa11bb`). A step The Curator **can't check** on this computer is never counted as
+   done: when it is the only thing left (Claude Code's skills, held by your Claude account), the row
+   says **Ready** with the line *"skills can't be checked here"*. **The whole row is the button**:
+   press anywhere on it and that agent's **setup steps** open in the reader on the right.
+3. **Every warning, as a notice, never folded.** Each to-fix line is a notice — its first sentence
+   is the title, the rest its line, its fix buttons beside it — in Simple and in Pro alike. A warning
+   that names no harness (the repository question, a newer handoff waiting on GitHub) is a notice
+   too.
+4. **Files not on GitHub yet** — *"N files are only on this computer. Your other computers see the
+   newest note after you sync."* with **Sync now**, when there are any.
+5. **The repository question**, when this project's folder on this computer is not set: *"Where is
+   ‹project›'s code on this Mac?"* with **Use ‹folder›** and **Choose another folder**.
 
-   Under the name, a grey line says when it last saved and from which computer (*"saved 2 hours ago
-   on this Mac"*, *"saved yesterday on studio-mac"* — a computer is shown by its **name**, never
-   by its folder id such as `studio-mac-aa11bb`; two computers with one name get a short tag, as
-   in the menu-bar widget — or *"not saved yet"*), and, for a harness The Curator has not tested, that you
-   should check its own settings too. **The whole row is the button**: press anywhere on it (the
-   pointer turns into a hand) and its **setup steps** open in the reader on the right.
-3. **+ Add an agent harness**, with the gloss beside it (below). Pick one and its setup steps
-   open in the reader with the keyboard focus on them; the list's last item, **Another
-   harness…**, adds one by name.
-4. **Files not on GitHub yet** — *"N files here are not on GitHub yet, across all domains"* with
-   **Sync now**, when there are any.
-5. **The three travel routes, said once**: handoffs, the brief and Documents by Sync now; the agent
-   instructions and `.curator-project` by your project's git; steps 1 and 2 set up on each computer
-   ([§13d](#what-travels-between-your-computers-and-how)). **Open Sync** when Personal Sync is not
-   set up here.
-6. Last, one quiet line: **More in Pro: every check per harness, the repository files, your
-   computers ›**.
+With **no agent yet**, the tab is one sentence — *"No agent on this project yet. An agent here is
+the app your agent runs in — Claude Code, Codex, Cursor, Antigravity…"* — and **Connect an agent**.
 
-With **no harness yet**, the list is one sentence: *"No agent harness on this project yet. A
-harness is the app your agent runs in — Claude Code, Codex, Cursor, Antigravity… Add the one you
-use; Setup walks you through the four steps."*
-
-**The four steps, in the reader.** Pressing a row that is not ready opens that harness's page on
-a numbered guide — the same in both views:
+**The four setup steps, in the reader.** Pressing a row opens that harness's page on a numbered
+guide — the same in Simple and Pro, and the same steps the [connect flow](#connect-an-agent--one-flow)
+walks through:
 
 | Step | What it asks | How often |
 |---|---|---|
-| ① **Connect it to The Curator** | Put The Curator's MCP entry in the exact file this harness reads, in its format: **Copy MCP entry**, **Reveal** when the file exists, and **Install for me** for Claude Desktop, Cursor and Antigravity (Claude Desktop only on Windows), which opens Settings → MCP bridge | Once per computer, for every project |
-| ② **Teach it how to use The Curator** | Install the two skills. The step says what a skill is: *"short instruction packs a harness loads when a task calls for them: my-curator teaches it how to read and write your wiki, curator-continuity when to save a handoff. A skill never updates itself, so an old copy can miss a rule added since."* Then where they go, always as a full folder, with the two `.zip` files, or *skip* when the harness has no skills support. A harness that reads skills from the project (OpenCode's `.agents/skills/`) is told *"in your project's top folder (‹folder›)"*, or `~/.claude/skills` for every project. Claude Code is told both places it reads: `~/.claude/skills` on this computer, or **Claude: Customize → Skills** in your account (which The Curator can't read, so the step says *can't check here*) | Once per computer, for every project (once per project for a project folder) |
+| ① **Connect it to The Curator** | Put The Curator's MCP entry in the exact file this harness reads, in its format: **Copy MCP entry**, **Reveal** when the file exists (Mac), and **Install for me** for Claude Desktop, Cursor and Antigravity (Claude Desktop only on Windows) — with a preview of what changes and the original kept | Once per computer, for every project |
+| ② **Teach it how to use The Curator** | Install the two skills. A skill is a short instruction pack a harness loads when a task calls for it: `my-curator` teaches it how to read and write your wiki, `curator-continuity` when to save a handoff. A skill never updates itself, so an old copy can miss a rule added since. The step says where they go (OpenCode: `.agents/skills/` in your project's top folder; Claude Code: `~/.claude/skills`, or **Claude: Customize → Skills** in your account, which The Curator *can't check*), with the two `.zip` files | Once per computer, for every project (once per project for a project folder) |
 | ③ **Point it at this project** | Paste the agent instructions at the very top of the file it reads (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`…), then commit and push, so your other computers get it too; *not checked yet* until the project's folder is set | Once per project, carried by its git |
-| ④ **Let it save once, from this computer** | Open a new conversation in the project's folder and give it a task; it turns ready once it saves this project from this computer under its own name | Once per computer |
+| ④ **Let it save once, from this computer** | Open a new conversation in the project's folder and give it a task; it turns **Ready** once it saves this project from this computer under its own name | Once per computer |
 
-Each step carries its own state (done, to fix, to do, optional, skip, can't check here, not
-checked yet) and its own buttons; a warning about the harness appears **inside** the step it
-belongs to. A ready harness's page shows its evidence instead: every file it read and what each
-said, in plain words — ages such as *"2 hours ago"*, never a raw timestamp, and no note about how
-or when The Curator was tested. **Re-check** (or coming back to the window) with a reader open
-updates it in place: **What Setup read** stays open or shut as you left it, and the reader keeps
-its scroll. Close the reader and the row you
-came from has focus again, so the steps are always one press away.
+Each step carries its own state (done, to fix, to do, optional, skip, can't check here, not checked
+yet) and its own buttons; a warning about the harness appears **inside** the step it belongs to. A
+ready harness's page shows its evidence instead: every file it read and what each said, in plain
+words. **Check again** with a reader open updates it in place. Close the reader and focus returns to
+the row you came from.
 
-### What Pro shows on this step
+### What Pro adds — one row per agent per computer
 
-With Pro on, step 5 is the full instrument described in the rest of this section: every to-fix
-line on top, each with all its buttons; the repository question; **+ Add an agent harness**; then
-**files not on GitHub yet** with **Sync now** (never only inside the closed Computers fold);
-then three closed folds, each marked **PRO** — **Agent harnesses** (a table: Harness · Status · Last saved · Saved from · On
-this computer, with the MCP / skills / block / hooks marks, an **Open setup steps** button on every
-row that is not ready, and Remove on a row you added), **Repository on this computer** and
-**Computers**. The whole table row opens the harness's steps, as in the simple view. Below 1200 px
-wide the tables stack rather than hide a column, so Remove is always reachable.
+With Pro on, the rows become **one table** — one row per harness **per computer** (or, with the
+**Per harness** switch, one per harness):
+
+| Column | What it holds |
+|---|---|
+| **Harness** · **Computer** | Which agent, on which computer |
+| **Status** | The same chip as Simple's row |
+| **Connected** · **Skills** · **Instructions** · **Hooks** | One word each: *yes*, *needs a fix*, *can't check here*, *not checked*, *not measured*, *no*, *unknown* — never a colour alone |
+| **Last save** · **Saves 7 d** | When it last saved this project, and how many times in the last 7 days |
+| **Remove** | Only on a harness you added yourself |
+
+**Filter…** narrows the table; **Per computer / Per harness** groups it; a cell opens that check's
+evidence in the reader. The notices are the same ones Simple shows — Pro adds data, never a warning
+Simple lacks. The repository files and the computers are Pro's
+[Computers tab](#project-context--what-the-screen-shows).
 
 ### How the check works
 
 The checklist in
 [§13d](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist) is visible
 in the app, for one project on one computer, so you do not have to check it by hand. v3.78.0 rebuilt
-step 5 from the app's own existing parts — no new component was designed for it — and answered a
+the check — then step 5 of the Context page — and answered a
 list of questions the first version left open: what an empty or broken config file means, how many
 *computers* you actually have when one Mac runs both the DMG and a source checkout, why a repository
 folder is needed at all, and what **Sync now** on this row actually syncs. **v3.79.0 did not change
@@ -6462,21 +6033,18 @@ commands it hands you now include the push (and a `git pull` first, when the mar
 exist on another computer); and two new readers — one for a repository file, one for a computer —
 open in the app's right-side panel instead of asking you to read a raw file.
 
-**Where it is.** **Context** → open a project → the **SETUP** tile in the overview, and **step 5 ·
-Setup** at the foot of the page. The machine-wide detail is in **Settings → MCP bridge → Agent
-harnesses**.
+**Where it is.** **Projects** → open a project → the **Agents** tab (the header's status sentence
+also names an agent that needs you, and Pro's **Agents** tile counts them). The machine-wide detail
+is in **Settings → MCP bridge → Agent harnesses**.
 
-**Nothing shows when nothing is wrong.** v3.77.0's step body had a summary card even on a clean
-project; v3.78.0 removed it. A project with no faults simply has no to-fix notes and, in Pro, three quiet
-folds below — there is no card, no score and no percentage anywhere in the step's body, on purpose:
-a "9/10" reads as a grade, and a grade invites optimising the number instead of the ten real things
-it stands for. (The overview's own SETUP tile is unchanged: it still reads *N to fix*, *repository
-not set* or *ready*, one word, the same as every other overview tile on the page.)
+**Nothing shows when nothing is wrong.** A project with no faults simply has no notices — there is
+no card, no score and no percentage anywhere on the tab, on purpose: a "9/10" reads as a grade, and
+a grade invites optimising the number instead of the ten real things it stands for.
 
-**The to-fix notes, loud, and now in two lines (v3.79.0).** In Pro each one is its own block, outside every
-fold (in the simple view a note about one harness is that harness's row, in the same words), with its own fix button(s) right beside it — never a list you have to open first. **Line 1
-says what is wrong**, naming the file, the computer or the date (*"AGENTS.md in `~/code/ott` has no
-Curator instructions"*); **line 2 says why it matters and what to do** (*"…so Antigravity doesn't
+**The to-fix notes, loud, in two lines (v3.79.0; kit notices since v4.3.0).** Each one is its own
+notice, in Simple and in Pro, with its own fix button(s) right beside it — never a list you have to
+open first. **The title says what is wrong**, naming the file, the computer or the date (*"AGENTS.md in `~/code/ott` has no
+Curator instructions"*); **the line under it says why it matters and what to do** (*"…so Antigravity doesn't
 know this project and may overwrite another tool's handoff. Paste them at the very top (create the
 file if it isn't there), then commit and push."*) — the two are never glued into one run-on
 sentence. **Every button's label says what pressing it does** — never a bare "Copy command": you'll
@@ -6506,7 +6074,7 @@ instead — a `git pull` there cannot bring a file this Mac never pushed.
 
 | You'll see | What it means | What to do | Which computer |
 |---|---|---|---|
-| A tool's config file **is empty / not valid JSON / can't open** | That file told the check nothing, and no other file of that tool proves the bridge either | Open the tool once (it may fill the file), or fix the syntax, or check macOS's Privacy & Security — then **Re-check** | This one |
+| A tool's config file **is empty / not valid JSON / can't open** | That file told the check nothing, and no other file of that tool proves the bridge either | Open the tool once (it may fill the file), or fix the syntax, or check macOS's Privacy & Security — then **Check again** | This one |
 | MCP entry **reads a different knowledge folder**, or its **launch file is missing** | The entry points somewhere stale — an old install, a moved folder | **Install for me** (Claude Desktop, Cursor, Antigravity on a Mac; Claude Desktop on Windows), or **Copy MCP entry**, paste over the old one; then restart the tool | This one |
 | MCP entry **is in one of Antigravity's config files but not the others** | Antigravity keeps three config files; a window that reads another may not reach The Curator | **Install for me** (it fills in the files that lack it), or **Copy MCP entry** and add it to the file the line names; then restart Antigravity | This one |
 | Instruction file **has no Curator instructions** | The tool doesn't know this project, and its agent may overwrite another tool's handoff | **Copy instructions**, paste at the very top (create the file if needed), commit and push | The repository, from any computer that has it cloned |
@@ -6533,30 +6101,24 @@ sit behind this step's ⓘ, moved here in v3.79.0 because they're words already 
 | *unmeasured* | a fact nobody has measured yet (most harnesses' hooks; a custom tool's instruction file, assumed rather than checked) |
 | *—* (none) | nothing to report — no config, no save, no evidence either way |
 
-**"checked *N* ago · Re-check."** The head of the step carries when it last read your tools' files
-and this repository, with a **Re-check** button beside it. **Re-check re-reads the config files and
+**"checked *N* ago · Check again."** The Agents tab's toolbar carries when it last read your tools'
+files and this repository, with **Check again** beside it (also in the header's **"···"** menu).
+*(The toolbar button was **Re-check** until v4.3.0; a few fix sentences and buttons still say
+**Re-check** — it is the same action.)* **Check again re-reads the config files and
 git state — it never re-reads your repository's file contents beyond `.curator-project` and the
 instruction files, and it changes nothing.** The check also runs itself automatically: when you come
 back to this window (a tab focus or the app becoming visible again) and the last reading is more
 than 10 seconds old, it quietly re-checks without you pressing anything — so switching from your
 editor back to The Curator after fixing a file shows the fix without an extra click.
 
-**Three folds, in the Handoffs table's own shape** *(Pro)*. Below the to-fix notes:
-
-- **Agent harnesses** *(called Tools, then Agent apps, before v4.2.0)* — one row per agent harness
-  that has saved to this project, is set up on this computer, or you added with **+ Add an agent
-  harness** (below). Each row's own word is one of **ready** (saved from this
-  computer, its bridge OK, its block current or the tool reads none), **to fix**, **partly checked**,
-  or **no save from here**. Click a row to open its full evidence — every file it read, what each one
-  said, and (on a Mac) a **Reveal** for anything found — in the right-side reader, the same place every other
-  detail page in the app opens. **Since v3.80.0, a row you added can be removed** — see "Adding a
-  tool," below.
-- **Repository on this computer** — the folder, whether `.curator-project` names this project and is
-  committed (and pushed, as of your last `git fetch` — the app never fetches your project on its
-  own), and for `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`: present, block present, current, at the top.
-  **Since v3.79.0, each file's row opens in the reader too** — see "The two readers" below.
-- **Computers** — see "How many computers?" below. **Since v3.79.0, each row opens in the reader**
-  as well.
+**Where the rest went (v4.3.0).** The three Pro folds of the old step — **Agent harnesses**,
+**Repository on this computer** and **Computers** — are now open data: the harnesses are the
+Agents tab's Pro table; the repository files checked and the project folder are on Pro's
+**Computers** tab (the repository question itself stays on Agents, in both layouts); the computers
+are the Computers tab's table — Computer · App · Harnesses · Curator version · Last save · Not sent.
+A harness's evidence — every file it read, what each one said, and (on a Mac) a **Reveal** for
+anything found — opens in the right-side reader from its row. A harness you added can be removed
+(see [Adding a harness](#adding-a-harness)).
 
 > **On Windows (v4.1.2)** the Setup check reads Claude Desktop's Windows settings file (every place the
 > one-click installer looks, under `%APPDATA%` and `%LOCALAPPDATA%`) and shows paths in those words, so
@@ -6566,7 +6128,7 @@ editor back to The Curator after fixing a file shows the fix without an extra cl
 > every platform** (it answered an error off the Mac before v4.1.2).
 
 **"+ Add an agent harness."** *(Called "+ Add a tool", then "+ Add an agent app", before v4.2.0.)*
-In both views. A listbox with two groups, **Known harnesses** (every harness The Curator can write
+On the Agents tab, in both layouts, and as the first step of **Connect an agent**. A listbox with two groups, **Known harnesses** (every harness The Curator can write
 an MCP entry for, including DeepSeek Harness, that is not already a row) and **Other**, whose last
 entry is **Another harness…**. Beside it, the gloss: *"An agent harness is the app your agent runs
 in — Claude Code, Codex, Cursor, Antigravity…"*. The row under the pointer, or the one the arrow
@@ -6589,14 +6151,14 @@ harnesses are already on the list. Picking a row does exactly that and nothing m
 written, no config is touched.
 
 **Adding a harness opens its page in the reader**, on the four numbered steps described in
-[the simple view](#the-simple-view--one-row-per-harness-v420) above — **Connect it to The
+[the simple view](#the-agents-tab--one-row-per-agent) above — **Connect it to The
 Curator**, **Teach it how to use The Curator**, **Point it at this project**, **Let it save once,
 from this computer** — the same in both views (a harness that is already ready opens on its
 evidence instead). A to-fix line about the harness appears **inside** the step it belongs to, never
 a second time above the guide.
 
-**Added harnesses can be removed** — the trash icon on its row in the **Agent harnesses** fold
-*(Pro)*, or **Remove from this list** on its page in the reader (both views). There is no
+**Added harnesses can be removed** — **Remove** on its row in the Agents tab's table *(Pro)*, or
+**Remove from this list** on its page in the reader (both layouts). There is no
 confirmation, because nothing is uninstalled: removing a harness only stops Setup checking it on
 this computer, and **+ Add an agent harness** brings it straight back. Two kinds of row stay
 regardless of who added them, and the reader says why: a harness that has **saved this project**
@@ -6617,16 +6179,14 @@ diagram, what lives where, a day with two computers, and the common mistakes —
 | `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, `.curator-project` | The project's **own git** | Commit and push here, pull there |
 | MCP settings, skills, hooks | **This computer only** | Set up again, on each computer — nothing syncs them |
 
-*The grey pill each fold carries in its own heading (for example "project's git" on Repository,
-"Personal Sync" on Computers, "set up on each computer" on Tools) names which of the three that
-fold's contents travel by. It is deliberately colourless — this step never uses colour, because
-colour on screen is reserved for a **domain's** identity dot elsewhere in the app, and a second
-meaning for the same channel would make both harder to read at a glance.*
+*Pro's **Computers** tab carries the same three rows as a table — **What · Travels by**: "Notes,
+the brief, documents and the wiki" → **Sync now**; "The instruction file and .curator-project" →
+**your project's git**; "The agent connection, skills and hooks" → **set up on each computer**.*
 
 ### The two readers — a repository file, and a computer
 
-**A Repository file, opened (v3.79.0).** Press a row under **Repository on this computer** — an
-instruction file or `.curator-project` — and it opens in the right-side reader: the file's real
+**A Repository file, opened (v3.79.0).** Press a repository file — an instruction file or
+`.curator-project`, from a harness's evidence or a to-fix notice — and it opens in the right-side reader: the file's real
 text, read-only, with the Curator block **framed** and marked with its own state (current /
 outdated / names another project / past what the tool reads), a **"‹tool› reads up to here"** rule
 drawn at the point a tool's cap cuts the file off (when it has one), and a **Copy current
@@ -6671,9 +6231,9 @@ downloaded app and a `git clone` of this repository used to read as two separate
 each keeps its own install identity; v3.78.0 finds every Curator install on *this* Mac (the app's own
 data folder, a repository folder you have set here if it is itself a Curator checkout, and the
 install behind each agent harness's MCP entry) and folds them into **one** physical-computer row, with
-each install's own name shown underneath (for example "also saved as `mac-17d23c`"). The Computers
-fold's own heading names both counts plainly — "1 computer · 2 installs" — so a number that looks
-doubled is explained on the same line rather than left for you to puzzle out.
+each install named in Pro's **Computers** table (its **App** column — for example "Mac app 4.3.0"
+and a source install), so a number that looks doubled is explained on the same row rather than left
+for you to puzzle out.
 
 Each row shows which tools saved from it, its newest save that has reached *this* computer, the
 Curator version it saved with (recorded from v3.77.0 on; an older save reads *not recorded*), and —
@@ -6686,7 +6246,7 @@ computer's own sync time is never recorded anywhere and is therefore never shown
 The `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` block and the `.curator-project` marker live in your
 project's **code checkout** — a different folder from your knowledge folder, and typically a
 different path on every computer. Nothing recorded that folder before v3.77.0, so the app could not
-check the block or the marker at all. The first time, step 5 asks for it.
+check the block or the marker at all. The first time, the Agents tab asks for it.
 
 **Auto-detected candidates.** Rather than a blank prompt, the folder note lists folders already found
 on this computer that are probably this checkout, each with a one-click **Use**: a folder Claude Code
@@ -6702,8 +6262,9 @@ may read it.
 
 ### What Sync now syncs
 
-**Sync now**, wherever it appears on this step, pulls and pushes your **whole** knowledge folder —
-every domain, not only this project's. The *"N files not on GitHub"* count on the Computers fold adds
+**Sync now**, wherever it appears on this page, pulls and pushes your **whole** knowledge folder —
+every domain, not only this project's. The *"N files are only on this computer"* count (Agents) and
+Pro's *Files not on GitHub yet* (Computers) add
 up every domain's pending changes for the same reason, so it is not this project's own count; the
 row also shows when the app last checked GitHub for incoming changes, and — because that check keeps
 at most 20 file names — says so when the real number may be larger than the list it can name.
@@ -6728,7 +6289,7 @@ other harness's row follows. Harnesses you name yourself are **kept per machine,
 
 *ok*, *to fix*, *can't check here*, *not checked* (for example: no project folder set yet),
 *unmeasured* (a fact nobody has measured — hooks on most harnesses, or a custom tool's instruction
-file). Until a project folder is set, the repository checks do not run, so the step lists only what
+file). Until a project folder is set, the repository checks do not run, so the tab lists only what
 *was* checked, never "nothing to fix" about work it never did. The block counts as current when every
 word matches the current **Copy agent instructions** text, however your editor wrapped the lines; a
 block that differs in any word (an older version, or a hand edit) is *outdated*. **Fixed in v3.79.0:**
@@ -7594,7 +7155,7 @@ used in the last 7 days. Tests are not counted."* Its reading shows *last time a
 Curator* and the five busiest tools, then *"N tools not used this week."*; the closed **All 24 tools**
 fold lists every tool with one plain line of what it does and *"N uses · last ‹age›"* or *"not used
 this week"*. The older tiles, session readings and *Across projects* described above are gone from
-this page (handoffs are on the Context page).
+this page (handoffs are on the Projects page).
 
 #### "Test all 24 tools" — lighting the map yourself
 
@@ -7679,7 +7240,7 @@ disagree.
 #### GitHub read-only token
 
 Since v3.65.2, **Settings → Knowledge base** also holds a **GitHub read-only
-token** row. It lets a project's Documents (Context, step ① — see
+token** row. It lets a project's Documents (Projects → Starting kit — see
 [Foundations](#documents--the-files-that-travel-with-a-project)) mirror straight
 from a GitHub repository, with no checkout on this computer. The ⓘ beside the
 block's title covers both halves of the page — the vault folder above, and this
@@ -7710,7 +7271,7 @@ whether it can see it, without mirroring anything. **Disconnect** removes it.
 > why a fine-grained token is recommended, and why Personal Sync's own token is
 > never used as the default here.
 
-In Context, step ① Documents' **Mirror from GitHub** panel, **READ WITH** offers
+In the Starting kit's **Add from GitHub** panel, **READ WITH** offers
 whichever of the two tokens are saved, each named by where it lives: this
 read-only token (shown by its last four characters) and Personal Sync's token
 (the one that syncs your knowledge base — a classic Personal Sync token can read
@@ -7889,7 +7450,7 @@ markdown files — which is the whole point.
 
 **Settings → Knowledge base → GitHub read-only token.** Lets a project's
 Documents mirror from a GitHub repository without a checkout on this Mac —
-the credential the Context view's **Mirror from GitHub** panel reads with,
+the credential the Starting kit's **Add from GitHub** panel reads with,
 under `tokenSource: 'config'`.
 
 The block is the same row shape as an API-key provider: a status well, a
@@ -8073,7 +7634,7 @@ disabled**, and its line links to Providers & keys instead of showing a cost.
 This applies wherever an AI action appears: Wiki health's three ✨ Quick-maintenance actions
 (each still shows its own estimate before it runs and what it actually cost after), System
 check's **Verify AI connection**, Chat's **Compile to Wiki**, Ingest's single-file and batch
-estimates, and Context step ①'s **✨ Suggest with AI** reading plan.
+estimates, and the Starting kit's **✨ Suggest with AI** reading plan.
 
 ### The principle: two jobs, not one setting with two halves
 
@@ -9250,7 +8811,7 @@ The cost figures throughout this section are for **Gemini and Claude**, the two 
 | **Wiki health — Semantic duplicate scan** (Phase 3, opt-in & cost-gated) | **Settings**, **API key management**, **updates** |
 | **Compile to Wiki** — turning a conversation into wiki pages (opt-in & cost-gated since v3.27.0) | **All three cost estimates** — batch ingest, semantic-dupe scan and Compile to Wiki. Each is computed locally with no AI call and no network request |
 | | **My Curator MCP server** (local bridge — free; the *frontier model* you connect to it bills you separately on its own plan) |
-| | **Project context** and the **menu bar icon** — both read plain files on your own disk. No AI call, no network request, no cost |
+| | **Projects** and the **menu bar icon** — both read plain files on your own disk. No AI call, no network request, no cost |
 
 So when you see a bill, the dominant line item is **ingest**. Chat, Compile and Health Ask-AI are negligible by comparison; everything else is genuinely free.
 
