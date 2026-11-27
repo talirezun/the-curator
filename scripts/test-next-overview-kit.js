@@ -177,56 +177,20 @@ function domainsOverview(over) {
 
 const XP = await import('../src/public/next/shared/explainer.js');
 
+// PHASE 2 (Projects, 2026-11-27): the Context page's strip (`renderLayerStrip`,
+// six step doors with an ⓘ) is gone with the numbered steps. The second
+// adopter of the overview card is the Projects page's Pro tile strip: the
+// REAL `projectTiles` (views/projects/model.js) through the REAL
+// `renderOverview`, exactly as views/memory.js `prjTiles` composes it.
+const PM = await import('../src/public/next/views/projects/model.js');
 function contextOverview(over) {
-  const state = {
-    activeDomain: 'acme',
-    activeProject: 'lumina',
-    projects: [],
-    // `state.knowledge` is a Map KEYED BY DOMAIN (v3.65.0's P10 package),
-    // not a single-domain object — `renderLayerStrip` reads it as
-    // `state.knowledge instanceof Map ? state.knowledge : null`, so the old
-    // plain-object fixture silently failed that check and dropped the
-    // KNOWLEDGE card out of the strip entirely.
-    knowledge: new Map([['acme', {
-      error: null, data: { pageCount: 767, lastIngestDate: '2026-09-13' },
-    }]]),
-    capture: { domain: 'acme', project: 'lumina', error: null,
-      data: { logPresent: true, totals: { sessions: 1 }, sessions: [] } },
-    ...(over || {}),
-  };
-  const read = {
-    scopes: [{ scope: 'session-2026-09-20-overview', machine: 'boxa', writtenAgeSeconds: 720 }],
-    savedCopies: 1,
-    distinctScopeCount: 1,
-    foundations: { present: true, documents: [
-      { slug: 'architecture.md', freshness: 'fresh' }, { slug: 'decisions.md', freshness: 'stale' },
-    ] },
-    // WHICH DOMAIN(S) the strip reads out of the Map above — `renderLayerStrip`
-    // falls back to `[state.activeDomain]` when this is absent, but the real
-    // caller always supplies it, so the fixture does too.
-    knowledgeDomains: ['acme'],
-    ...(over && over.__read ? over.__read : {}),
-  };
-  // `freshnessTier` is shared/age.js's, imported by the view — injected REAL
-  // here, because the tier a reading paints is the reading.
-  // v3.67.2: `foundationsWord` asks whether a mirror is read from GitHub.
-  // v3.69.0: per DOCUMENT now — `foundationsFacts` reads each row's own source
-  // group through shared/foundations-sources.js (`FSRC`), injected REAL.
-  const fns = ['skeletonOf', 'copiedFromOf', 'foundationsFacts', 'foundationsWord', 'newestPair',
-    'effectiveSave', 'formatAge', 'freshDotHtml', 'renderLayerStrip'];
-  // v3.71.0: the strip's ⓘ is the `context.overview` explainer — the kit is
-  // injected REAL (it imports only import-free modules, so it runs here).
-  const box = new Function('docsLinkHtml', 'renderOverview', 'escapeHtml', 'state',
-    'formatDayAge', 'freshnessDotHtml', 'freshnessTier', 'FSRC', 'explainerHtml', 'explainerLabel',
-    'const READ_FIRST_BUDGET_BYTES = 120 * 1024;\n'
-    + 'const FOUNDATIONS_BUDGET_BYTES = ' + FOUNDATIONS_BUDGET_BYTES + ';\n'
-    + fns.map((n) => extractFunction(MEMORY_JS, n, 'memory.js')).join('\n')
-    + '\nreturn renderLayerStrip;')(
-    docsLinkHtml, renderOverview, escapeHtml, state,
-    () => '1 week ago',
-    () => '<span class="fresh-dot fresh-week" aria-hidden="true"></span>',
-    freshnessTier, FSRC, XP.explainerHtml, XP.explainerLabel);
-  return box(read);
+  const o = over || {};
+  return renderOverview({ id: 'prj-ov', eyebrow: 'Overview', cards: PM.projectTiles({
+    lastSave: { age: '12 min ago', who: o.who || 'Claude Code', computer: o.computer || 'this Mac' },
+    agents: { count: 3, needYou: 1 }, saves7: 78,
+    documents: { count: 2, readFirst: 1 }, knowledge: { pages: 767, domains: 1 },
+    kit: { tokens: 25900, share: '2.6% of 1M' },
+  }) });
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -268,14 +232,13 @@ const CTX = contextOverview();
   eq('...and six on a project', withClass(CTX, 'cur-ov-card').length, 6);
   eq('every figure on both carries a `.cur-ov-value`',
     withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '7/6');
-  ok(/class="cur-eyebrow">PAGES</.test(DOM) && /class="cur-eyebrow">DOCUMENTS</.test(CTX),
+  ok(/class="cur-eyebrow">PAGES</.test(DOM) && /class="cur-eyebrow">Documents</i.test(CTX),
     'and every figure is captioned by the SAME `.cur-eyebrow` the kit uses everywhere');
 
   // THE EYEBROW AND ITS ⓘ — one pattern, one word, one component.
   for (const [name, html, id, label] of [
     // v3.71.1: the Domains ⓘ is named by its explainer's own label.
     ['Domains', DOM, 'dm-overview-info', XP.explainerLabel('domains.overview')],
-    ['Context', CTX, 'mem-layers-info', 'About the readings on this page'],
   ]) {
     if (name === 'Domains') {
       ok(html.includes('hidden>' + XP.explainerHtml('domains.overview') + '</div>'),
@@ -303,7 +266,11 @@ const CTX = contextOverview();
     const group = html.indexOf('cur-ov-group');
     ok(panel !== -1 && panel < group,
       name + ': ...with its panel between the head and the card', panel + '/' + group);
-  }
+  }  // The Projects strip carries NO ⓘ of its own: the page's ⓘ beside "···"
+  // says what a project is, and each tab has its "How this works" (D5: no
+  // per-block marking on this page).
+  ok(new RegExp('class="cur-ov-eyebrow[^"]*">OVERVIEW<', 'i').test(CTX), 'Projects: the card is captioned Overview (the eyebrow style sets the case)');
+  ok(!/tx-vh-info|tx-vh-panel/.test(CTX), 'Projects: ...and carries no ⓘ of its own');
 }
 {
   // §1c — THE ONLY THREE PERMITTED DIFFERENCES, enumerated (v3.65.0).
@@ -320,7 +287,7 @@ const CTX = contextOverview();
     'the Domains figures carry NO second line, so they are byte-identical to the row they replaced');
   // v3.72.1: 4 — AGENT SESSIONS gained "last 30 days" when a count was taken
   // (truth audit F3), beside DOCUMENTS/MEMORY/KNOWLEDGE's own second lines.
-  eq('the Context figures carry one each', withClass(CTX, 'cur-ov-sub').length, 4);
+  eq('the Projects figures carry one each (all six, every reading in hand)', withClass(CTX, 'cur-ov-sub').length, 6);
   ok(/class="cur-ov-value dm-stat-value/.test(DOM) && !/dm-stat-value/.test(CTX),
     'and the alias token is the second — see §2');
   // ── THE THIRD IS A TRACK FLOOR, NOT A TYPE RUNG ──────────────────────
@@ -421,27 +388,11 @@ section('§3 — A FILTER HIGHLIGHT ONLY WHERE THERE IS A FILTER');
     '...the one the filter actually names', DOM.slice(0, 900));
   eq('NO Context card carries aria-pressed — there is no filter on that page',
     pressed(CTX).length, 0);
-  // v3.71.0: the Context ⓘ is the `context.overview` explainer, which says
-  // what a press DOES (it jumps); "readings, not a filter" is the guide's.
-  ok(CTX.includes('Press one to jump to its step.')
-    && /readings, not a filter/.test(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'user-guide.md'), 'utf8')),
-    '...and the ⓘ says what a press does in words, rather than leaving the reader to notice');
-  // The Domains ⓘ must NOT make that claim, because its figures ARE a filter.
-  ok(!DOM.includes('not a filter'), 'CONTROL: the Domains ⓘ makes no such claim');
-
-  // EVERY CARD IS A DOOR ON THE CONTEXT PAGE, and each one names its step.
-  // FOUR now, not three (see the card-count note above): the KNOWLEDGE card
-  // the fixture was silently dropping is a door too, and CAPTURE joined the
-  // jump row in v3.64.2 — so the fourth entry here is CAPTURE's own step, not
-  // a second KNOWLEDGE jump.
-  const jumps = tags(CTX).filter((t) => t.attrs['data-ov-jump'] !== undefined)
-    .map((t) => t.attrs['data-ov-jump']);
-  // v3.67.0: and SESSION START opens step 4, the sum of the three layers.
-  // v3.77.0: and SETUP opens step 5.
-  eq('the six readings open their steps',
-    jumps.join(','), 'context-canonical,context-state,context-knowledge,capture,context-session,context-setup');
-  ok(/aria-label="Documents, 2 documents — go to step 1"/.test(CTX),
-    '...each with an accessible name that says where it goes', CTX.slice(0, 900));
+  // The Projects tiles are READINGS, not doors: the tabs are the navigation
+  // (there are no numbered steps left to jump to).
+  const jumps = tags(CTX).filter((t) => t.attrs['data-ov-jump'] !== undefined);
+  eq('no Projects tile is a jump — the tab strip is the navigation', jumps.length, 0);
+  ok(!DOM.includes('not a filter'), 'CONTROL: the Domains ⓘ makes no "not a filter" claim');
   const dj = tags(DOM).filter((t) => t.attrs['data-ov-jump'] !== undefined)
     .map((t) => t.attrs['data-ov-jump']);
   ok(dj.includes('projects'),
@@ -564,8 +515,8 @@ const ATTR = '" onmouseover="alert(1)';
 
   // REAL HOSTILE INPUT THROUGH THE REAL VIEW. The domain name is a user
   // string and it reaches the KNOWLEDGE card's second line.
-  const hostileCtx = contextOverview({ activeDomain: XSS });
-  ok(!hostileCtx.includes('<img '), 'a hostile DOMAIN NAME is escaped on the real Context card',
+  const hostileCtx = contextOverview({ who: XSS, computer: XSS });
+  ok(!hostileCtx.includes('<img ') && hostileCtx.includes('&lt;img'), 'a hostile HARNESS and COMPUTER name are escaped on the real Projects card',
     hostileCtx.slice(0, 400));
 }
 {
@@ -589,19 +540,15 @@ section('§5 — NO PERCENTAGES, NO RATIOS, AND A MARK NEVER READS ALONE');
   const visible = (html) => html
     .replace(/<div class="tx-vh-panel"[\s\S]*?<\/div>/g, ' ')
     .replace(/<[^>]*>/g, ' ');
-  for (const [name, html] of [['Domains', DOM], ['Context', CTX]]) {
-    ok(!/\d+\s*%/.test(visible(html)), name + ': no percentage is printed on the card');
-    ok(!/\b\d+\s*\/\s*\d+\b/.test(visible(html)), name + ': and no ratio either');
-  }
-  // EVERY MARK IS aria-hidden AND HAS A WORD BESIDE IT. The dot carries no
-  // reading of its own — the app-wide rule for the freshness scale.
-  const dots = [...CTX.matchAll(/<span class="fresh-dot[^"]*"([^>]*)>/g)].map((m) => m[1]);
-  ok(dots.length === 3 && dots.every((a) => /aria-hidden="true"/.test(a)),
-    'all three Context marks are aria-hidden — the words beside them are the reading',
-    JSON.stringify(dots));
-  ok(/fresh-dot fresh-week[^<]*<\/span>2 documents/.test(CTX.replace(/\s+/g, ' ')),
-    '...and the mark rides INSIDE the value, beside the reading it qualifies',
-    CTX.slice(CTX.indexOf('FOUNDATIONS'), CTX.indexOf('FOUNDATIONS') + 300));
+  ok(!/\d+\s*%/.test(visible(DOM)), 'Domains: no percentage is printed on the card');
+  ok(!/\b\d+\s*\/\s*\d+\b/.test(visible(DOM)), 'Domains: and no ratio either');
+  // PROJECTS (phase 2, the owner-approved mockup): ONE percentage, the
+  // starting kit's share of the agent's window, always WITH its denominator
+  // ("2.6% of 1M") — a share of a stated whole, never a score against a target.
+  const pcts = visible(CTX).match(/\d+(?:\.\d+)?\s*%[^<]{0,12}/g) || [];
+  ok(pcts.length === 1 && /% of \S+/.test(pcts[0]), 'Projects: the one percentage is the kit\'s share, said with its whole', JSON.stringify(pcts));
+  ok(!/\b\d+\s*\/\s*\d+\b/.test(visible(CTX)), 'Projects: and no ratio');
+  ok(!/fresh-dot/.test(CTX), 'Projects: no mark on a tile — every reading is in words');
   ok(!/fresh-dot/.test(DOM),
     'the Domains figures take no mark, because nothing there is a comparison against a clock');
 }

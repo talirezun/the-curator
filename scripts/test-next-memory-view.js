@@ -278,12 +278,14 @@ let failed = 0;
 // editor, the documents, the loaders, the clocks) are NOT retired.
 const RETIRED = new Set(JSON.parse(readFileSync(new URL('./test-helpers/memory-view-retired.json', import.meta.url), 'utf8')).pins);
 let retired = 0;
+const retiredHit = new Set();
+const retiredPassed = new Set();
 const failedKeys = [];
 let currentSection = '';
 function ok(label, cond, detail) {
   const key = currentSection + ' :: ' + label;
-  if (cond) { passed++; console.log('  ✓ ' + label); }
-  else if (RETIRED.has(key)) { retired++; console.log('  ⊘ retired (its page is gone): ' + label); }
+  if (cond) { passed++; if (RETIRED.has(key)) retiredPassed.add(key); console.log('  ✓ ' + label); }
+  else if (RETIRED.has(key)) { retired++; retiredHit.add(key); console.log('  ⊘ retired (its page is gone): ' + label); }
   else { failed++; failedKeys.push(key); console.log('  ✗ ' + label + (detail ? ' — ' + detail : '')); }
 }
 function eq(label, actual, expected) {
@@ -3710,6 +3712,7 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     'function maybeLoadSessionStart() {}\n' +
     // v3.77.0: step 5's check, asked for after the paint the same way.
     'function maybeLoadSetup() {}\n' +
+    'function wireProjects() {}\n' +
     // v3.72.1: the poll tick re-asks the two cached readings beside the index
     // (truth audit F2/F5). That function is driven in test-next-capture-meter
     // §8b; here it is COUNTED, so §11 can say the tick calls it.
@@ -4472,6 +4475,7 @@ function makeFocusRig({ activeId = null, presentIds = [], detailLoading = false 
     'function maybeLoadSessionStart() {}\n' +
     // v3.77.0: step 5's check, asked for after the paint the same way.
     'function maybeLoadSetup() {}\n' +
+    'function wireProjects() {}\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -4511,6 +4515,7 @@ try {
     'function maybeLoadSessionStart() {}\n' +
     // v3.77.0: step 5's check, asked for after the paint the same way.
     'function maybeLoadSetup() {}\n' +
+    'function wireProjects() {}\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -5434,88 +5439,22 @@ try {
 // absence of a <details>, plus the two facts the closed summary has to carry
 // for the fold to be usable at all: the age and the size.
 try {
+  // PHASE 2 (Projects, 2026-11-27): `renderBrief` — the brief's fold, its
+  // pencil and its summary line — is GONE with the five-step page; the brief
+  // is a Starting kit row now (Edit opens THIS editor in the tab, pinned in
+  // scripts/test-projects-page.js §10). Its assertions were deleted rather
+  // than retired: run against a removed function they either failed or
+  // passed vacuously. What follows drives the still-shipping EDITOR, which
+  // used to sit after a crash on the gone pencil and did not run.
   const R = makeRenderers({ briefEdit: null });
   const briefAt = new Date(Date.now() - 8 * 86400_000).toISOString();
   const present = { brief: { present: true, text: '## x\n\nbody', updatedAt: briefAt } };
+  ok('CONTROL: renderBrief really is gone (so nothing below reads it)', GONE.has('renderBrief'));
 
-  // ── THE PENCIL, AND WHERE IT IS ─────────────────────────────────────────
-  const idle = R.renderBrief(present);
-  ok('the pencil is anchored on the fold\'s own row, not on a toolbar of its own',
-    /<div class="mem-brief-row">[\s\S]*?id="mem-brief-edit"/.test(idle), idle.slice(0, 400));
-  ok('...and `.mem-block-toolbar` is gone from the rendered page entirely',
-    !idle.includes('mem-block-toolbar'));
-  ok('...and it is a real <button> with an accessible name, not a bare glyph',
-    /<button type="button"[^>]*id="mem-brief-edit"[^>]*aria-label="Edit standing brief"/.test(idle));
-  ok('...carrying a 14px inline SVG, because app.js has no `pencil` icon to ask for',
-    /id="mem-brief-edit"[\s\S]{0,300}<svg width="14" height="14"/.test(idle));
-  // ICON-ONLY. The word "Edit" is gone with the toolbar row that made it
-  // necessary; the accessible name is the aria-label above, and there is no
-  // `title=` (memory.js's tooltip budget is 1 and may not grow).
-  const pencilInner = (/<button[^>]*id="mem-brief-edit"[^>]*>([\s\S]*?)<\/button>/.exec(idle) || [])[1];
-  ok('CONTROL: the button\'s contents were actually extracted', typeof pencilInner === 'string');
-  ok('the control is ICON-ONLY — its contents are the glyph and NOTHING else',
-    pencilInner.replace(/<svg[\s\S]*?<\/svg>/g, '').trim() === '', JSON.stringify(pencilInner));
-  ok('...and carries no tooltip', !/title="/.test(idle));
-  ok('the brief IS a fold, keyed on a stable hook so the next render can re-open it',
-    /<details class="mem-fold" data-mem-fold="brief"/.test(idle));
-  ok('...and the pencil is OUTSIDE its <summary> (ancestry, not substring)',
-    ancestorTags(idle, 'id="mem-brief-edit"').every((t) => t !== 'summary'),
-    ancestorTags(idle, 'id="mem-brief-edit"').join(' > '));
-  // ── THE SUMMARY HAS TO BE ENOUGH TO DECIDE WITH ───────────────────────
-  // A collapsed section creates the question "is this worth opening", and the
-  // two facts that answer it are how old the document is and how big. Both are
-  // asserted, because a fold whose head says only "The brief" would be a
-  // chevron over a mystery.
-  ok('the closed summary carries the brief\'s AGE, live-ticking',
-    idle.includes(`data-mem-age-at="${briefAt}"`)
-    && /class="mem-age-words">1 week ago</.test(idle), idle.slice(0, 500));
-  ok('...and its SIZE, so a four-screen brief and a two-line one are told apart',
-    /· 3 words</.test(idle), idle.slice(0, 500));
-  ok('...and does NOT repeat the block\'s own title back at the reader',
-    !/<summary[\s\S]*?Standing brief[\s\S]*?<\/summary>/.test(idle));
-  ok('the document is rendered through the shared markdown renderer',
-    idle.includes('chat-md-h'));
-  // THE SIZE IS THE EDITOR'S OWN FIGURE. Two counts of one file on one screen
-  // that could disagree is the defect class this suite keeps finding; both go
-  // through briefStats.
-  eq('the summary\'s word count IS briefStats\' — one measurement, not two',
-    (/· (\d[\d,]*) words</.exec(idle) || [])[1],
-    String(R.briefStats('## x\n\nbody').words));
-
-  const absent = R.renderBrief({ brief: { present: false } });
-  ok('with no brief yet, the control invites writing one',
-    /aria-label="Write a standing brief"/.test(absent), absent.slice(0, 400));
-  // NO FOLD WHEN THERE IS NOTHING TO FOLD. The one sentence here is the one
-  // that argues for writing a brief; hiding it behind a chevron while leaving
-  // the control beside it reads v3.17.1 backwards.
-  ok('...and the empty state is NOT folded — the case for writing one is visible',
-    !absent.includes('<details'), absent.slice(0, 400));
-  ok('...but keeps the same card chrome, so the pencil does not jump when the '
-    + 'first brief lands', absent.includes('mem-fold mem-fold-flat')
-    && /<div class="mem-brief-row">[\s\S]*?id="mem-brief-edit"/.test(absent));
-
-  // ── PRESSING EDIT MAY NOT DESTROY A DRAFT ───────────────────────────────
-  // The click handler builds a FRESH `state.briefEdit` off the last read, so a
-  // second press during an edit silently discarded unsaved text. The control
-  // is withheld while an editor is up; Cancel is the way out, and it asks.
-  const editingBrief = makeRenderers({
-    briefEdit: { domain: 'a', project: 'b', loaded: 'x', text: 'y', busy: false,
-      error: null, preview: false, confirmDiscard: false },
-  }).renderBrief(present);
-  ok('while the editor is open the pencil is WITHHELD — pressing it would '
-    + 'rebuild the draft from disk and lose what was typed',
-  !editingBrief.includes('id="mem-brief-edit"'), editingBrief.slice(0, 300));
-  ok('CONTROL: the editor really is on screen in that fixture',
-    editingBrief.includes('id="mem-brief-text"'));
-
-  // A MIRROR GETS NO EDITOR AND NO PENCIL. The backend refuses the write, and
-  // a control whose only outcome is a refusal is worse than no control.
-  const mirror = makeRenderers({ briefEdit: null, detail: { readonly: true } })
-    .renderBrief({ ...present, readonly: true });
-  ok('a read-only Shared Brain mirror is offered no pencil', !mirror.includes('id="mem-brief-edit"'));
-  eq('...and no editor either',
+  // A MIRROR GETS NO EDITOR. The backend refuses the write, and a control
+  // whose only outcome is a refusal is worse than no control.
+  eq('a read-only Shared Brain mirror gets no editor',
     R.renderBriefEditor({ brief: { present: true, text: 'x' } }, true), '');
-  ok('CONTROL: the mirror still shows the brief itself', mirror.includes('chat-md-h'));
 
   // ── THE EDITOR ──────────────────────────────────────────────────────────
   const mkEdit = (over) => makeRenderers({
@@ -5532,10 +5471,6 @@ try {
     && editing.includes('id="mem-brief-cancel"'));
   ok('...and it says REPLACE rather than implying an append',
     /replaces the whole document/i.test(editing));
-  ok('the editor reaches the PAGE, not merely the function',
-    mkEdit({}).renderBrief(present).includes('id="mem-brief-text"'));
-  ok('...and the rendered document is hidden while the editor is up, so there is one copy on screen',
-    !mkEdit({}).renderBrief(present).includes('class="mem-doc"'));
 
   // FOUR, not three. Preview joined Save, Cancel and the textarea when the
   // editor gained it in v3.55.0 — updated deliberately, because a control the
@@ -6403,6 +6338,7 @@ try {
     'function maybeLoadSessionStart() {}\n' +
     // v3.77.0: step 5's check, asked for after the paint the same way.
     'function maybeLoadSetup() {}\n' +
+    'function wireProjects() {}\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -6953,39 +6889,13 @@ try {
       'state/lumina/ws-00/boxa/current.md');
   }
 
-  // ── "SHOW N MORE" APPENDS ───────────────────────────────────────────────
-  {
-    const r = rig();
-    ok('SETUP: the footer\'s click handler was bound', typeof r.moreBtn._click === 'function');
-    r.moreBtn._click();
-
-    const added = [...r.tbody._appended.matchAll(/data-mem-scope="([^"]*)"/g)].map((m) => m[1]);
-    eq('the press appends the REMAINING rows — three, from a list of eight',
-      added.join(','), 'ws-05,ws-06,ws-07');
-    eq('...and the window records what is now on screen', r.st.wsWindow, 8);
-    ok('...and the footer removes itself, because it is the list\'s last row and '
-      + 'a hidden row still occupies the rule above it', r.moreBtn._removed === true);
-    ok('the count line is rebuilt and stops claiming a window',
-      r.countEl.outerHTML.includes('8 saved copies')
-      && !r.countEl.outerHTML.includes('showing 5 of 8'), r.countEl.outerHTML);
-
-    // AN APPEND, NOT A RENDER. A render replaces the whole pane: the page's
-    // scroll position moves, any open ⓘ is rebuilt, and every row already on
-    // screen is re-parsed.
-    eq('NOT ONE RENDER HAPPENED — the rows already read do not move', r.calls.render, 0);
-
-    // ...and the appended rows are LIVE. Binding only the new nodes is what
-    // stops a row already on screen getting a second listener and opening the
-    // reader twice.
-    const fresh = r.tbody.children[r.tbody.children.length - 1]._btn;
-    ok('the appended rows are wired', typeof fresh._click === 'function');
-    fresh._click();
-    await new Promise((res) => setImmediate(res));
-    eq('...and pressing one opens ITS work-stream', r.calls.scopesLoaded.join(','), 'ws-07/boxa');
-    eq('CONTROL: the rows that were already on screen were not re-bound — a '
-      + 'second listener opens the reader twice',
-    r.rowButtons[0]._click === r.rowButtons[0]._click && r.calls.reader.filter((c) => c.loading).length, 1);
-  }
+  // ── "SHOW N MORE" — DELETED (phase 2, 2026-11-27) ──────────────────────
+  // The work-stream table's windowed footer (`wsMoreHtml`, `#mem-ws-more`) is
+  // gone with the table: the Now card shows the newest note and four earlier
+  // ones, and Pro's History table lists every note. Its sub-block crashed on
+  // the missing footer and took every block after it in this section down
+  // with it (the project switch, Escape and ✕ returning focus); deleted so
+  // those run again.
 
   // ── SWITCHING PROJECT RESETS THE WINDOW ────────────────────────────────
   //
@@ -7139,28 +7049,13 @@ try {
     /\n  closeReader\(\);\n/.test(appCode), 'navigate');
   }
 
-  // ── AND THE PAGE ITSELF NO LONGER PRINTS THE DOCUMENT ───────────────────
-  {
-    const page = makeRenderers({
-      activeDomain: 'acme', activeProject: 'lumina', scope: 'ws-00', machine: 'boxa',
-      detailLoading: false, journalLimit: 10, openFolds: {}, projects: [],
-      projectRead: { scopes, savedCopies: 8, distinctScopeCount: 8,
-        brief: { present: true, text: '# B\n\n## Goal\n\nShip it.', updatedAt: iso(600) } },
-      detail: { scope: 'ws-00', machine: 'boxa',
-        current: { present: true, writtenAgeSeconds: 120, writtenAt: iso(120),
-          text: '# T\n\n> The headline\n\n## Where things stand\n\nUNIQUE-BODY-MARKER\n' },
-        journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } },
-    }).renderProject();
-    ok('the handoff\'s body is NOT on the page', !page.includes('UNIQUE-BODY-MARKER'),
-      page.slice(0, 200));
-    ok('...and neither is its headline, its lead fold or its stamp',
-      !page.includes('The headline') && !page.includes('mem-fold-lead')
-      && !page.includes('mem-doc-headline') && !page.includes('mem-doc-stamp'),
-      page.slice(0, 200));
-    ok('CONTROL: the STANDING BRIEF is still a document on the page, so this is '
-      + 'about the handoff rather than about documents having been removed',
-    page.includes('class="mem-doc"') && page.includes('Ship it'));
-  }
+  // ── "THE PAGE NO LONGER PRINTS THE DOCUMENT" — REVERSED (phase 2) ─────────
+  // v3.56.0 took the handoff off the page and into the reader. The owner's
+  // verdict (ANALYSIS-pro-ux §A1 #5, "the value is never shown") reverses it:
+  // the Now tab prints the newest handoff on the page. Its three assertions
+  // drove the gone `renderProject` (two passed vacuously); deleted, and the
+  // new behaviour is pinned in scripts/test-projects-page.js §10.
+  void scopes;
 } catch (e) { blockCrashed(e); }
 
 // ── §17d — WHICH PAIR OPENS BY ITSELF, AND WHOSE CLOCK DECIDES ──────────
@@ -11271,53 +11166,10 @@ try {
 
 } catch (e) { blockCrashed(e); }
 
-// ── §21g — the skeleton's step ① HEAD is byte-identical (v3.65.0) ───────
-//
-// The skeleton exists so the block chrome does not move between the two
-// paints, and the chrome used to include the lede. There is no lede on either
-// side now (R4), so what is compared is the HEAD ROW itself — the numeral,
-// the title, and whether a mark is offered — which is the whole of the chrome
-// that remains. Both renderers are executed and their emitted heads compared,
-// which is the only form of this claim a suite holding one of them could not
-// fake.
-try {
-  const st = {
-    activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10,
-    projects: [{ domain: 'acme', project: 'lumina', hasBrief: true, savedCopies: 2 }],
-    projectRead: fndRead(fndPayload([fndDoc()])), detail: null, detailLoading: false,
-  };
-  const R = makeRenderers(st);
-  const headOf = (html) => {
-    const i = html.indexOf('settings-block-context-canonical');
-    if (i < 0) return null;
-    const m = /<div class="settings-block-hd">([\s\S]*?)<\/div>/.exec(html.slice(i));
-    // The MARK is stripped before the comparison: the skeleton deliberately
-    // offers no ⓘ (a help panel a user could open and have torn away 30ms
-    // later is worse than one that arrives with the content), and what is
-    // under test is the numeral and the title.
-    return m ? m[1].replace(/<button[\s\S]*?<\/button>/g, '').trim() : null;
-  };
-  const a = headOf(R.renderProject());
-  const b = headOf(R.renderProjectSkeleton());
-  ok('both renderers really emitted step ①', !!a && !!b, JSON.stringify([a, b]));
-  eq('the skeleton\'s head row is byte-identical to the real one', b, a);
-  ok('...and it is the numeral and the Title-case title, in that order',
-    /class="settings-block-num"[^>]*>1<[\s\S]*<h2 class="settings-job-title">Documents<\/h2>/
-      .test(String(a)), String(a));
-  // THE FILLED PAGE OFFERS THE MARK; the skeleton does not. Asserted in both
-  // directions so "identical" cannot be satisfied by neither having one.
-  const iReal = R.renderProject().indexOf('settings-block-context-canonical');
-  ok('the filled page offers the ⓘ in that head row',
-    /<div class="settings-block-hd">[\s\S]*?class="tx-vh-info"[\s\S]*?<\/div>/
-      .test(R.renderProject().slice(iReal)));
-  // Scoped to the STEP's own head row: the strip above the steps carries an ⓘ
-  // of its own in both frames, and a document-wide scan would be measuring it.
-  ok('...and the skeleton offers none there, because it would be torn away 30ms later',
-    !/class="tx-vh-info"/.test(String(
-      /<div class="settings-block-hd">([\s\S]*?)<\/div>/.exec(
-        R.renderProjectSkeleton().slice(
-          R.renderProjectSkeleton().indexOf('settings-block-context-canonical')))[1])));
-} catch (e) { blockCrashed(e); }
+// ── §21g — DELETED (phase 2, 2026-11-27) ──────────────────────────────────
+// It compared step ①'s head row in renderProject and renderProjectSkeleton.
+// Both renderers and the numbered step are gone by design (the page is an
+// object page with tabs now); every assertion here had no subject.
 
 // ── §21h — a freshness change is a repaint, and nothing else has moved ──
 //
@@ -12090,7 +11942,7 @@ try {
     const html = makeRenderers(withSS(data, { projectRead: read })).renderSessionStart(read);
     const same = /id="mem-ss-same"[\s\S]*?<\/div>/.exec(html);
     ok('nothing read first: ONE plain line says why every budget sends the same, with the door to step 1 and (v3.70.1) the planner',
-      !!same && /Every reading budget sends the same ≈8\.8k tokens right now\. Nothing is read first, so every budget sends the same — a budget only caps the documents marked read first\. Mark the two or three an agent should never start without in step 1, or plan them under Documents at start below, where the meter previews them first\./.test(same[0])
+      !!same && /Every reading budget sends the same ≈8\.8k tokens right now\. Nothing is read first, so every budget sends the same — a budget only caps the documents marked read first\. Mark the two or three an agent should never start without as Always read, or plan them under Documents at start, where the meter previews them first\./.test(same[0])
       && /id="mem-ss-choose">Choose read-first documents<\/button>/.test(same[0]), same ? same[0] : html.slice(0, 1500));
     ok('...unfolded, before the first chevron', html.indexOf('id="mem-ss-same"') < html.indexOf('<details'));
     ok('...and the meter\'s dashed room is EMPTY and says so, against the owner\'s 51.2k budget',
@@ -12499,7 +12351,7 @@ try {
     ok('④ reads the pending proposal as an `if applied` line, measured by the store',
       /if applied<\/span><span class="cur-mon-value">[\s\S]*?≈15\.6k · 7\.8%[\s\S]*?Standard ≈16\.4k reading budget, with the suggestion/.test(ss), ss.slice(-2500));
     ok('...and the METER draws that proposal as a preview, naming it — nothing is applied yet',
-      /class="bk-preview">preview</.test(ss) && /Previewing the suggested reading plan — apply it in step 1\./.test(ss));
+      /class="bk-preview">preview</.test(ss) && /Previewing the suggested reading plan — apply it under Documents\./.test(ss));
     const stale = { ...withPrev, sessionPreview: { ...withPrev.sessionPreview, key: '{"plan":{}}' } };
     ok('...and never a preview measured for a DIFFERENT set of ticks',
       !/if applied/.test(makeRenderers(stale).renderSessionStart(stale.projectRead)));
@@ -12715,7 +12567,7 @@ try {
     mk(herePl).api.maybeLoadSessionStart(1);
     ok('...and one made on THIS project is kept', herePl.planner && herePl.planner.draft['a.md'] === 'read-first');
     ok('render() asks after it paints — the measurement is never on a switch\'s critical path',
-      /wire\(token\);\s*restoreFocus\(\);[\s\S]{0,300}maybeLoadSessionStart\(token\);\s*maybeLoadSetup\(token\);\s*\}$/.test(
+      /wire\(token\);\s*wireProjects\(token\);\s*restoreFocus\(\);[\s\S]{0,300}maybeLoadSessionStart\(token\);\s*maybeLoadSetup\(token\);\s*\}$/.test(
         stripComments(extractFunction(viewSrc, 'render', 'memory.js')).trim()));
     ok('...and selectProject never asks for it at all', !/sessionStart|session-start/.test(
       extractFunction(viewSrc, 'selectProject', 'memory.js')));
@@ -13687,7 +13539,7 @@ const NOT_EXECUTED = {
   // screen check).
   refreshSetupOnWake: 'one staleness gate (setup-step.js setupCheckIsStale, executed in test-next-setup-step.js) in front of maybeLoadSetup; its call from revalidateReadings is asserted above',
   openSetupToolReader: 'openReader + bindSetup on #reader-root; the payload is setup-step.js toolReaderContent, executed in test-next-setup-step.js',
-  refreshSetupToolReader: 'DOM-only (the reader\'s fold, scroll and focus across a re-check); driven in a real browser by scripts/e2e-context-pro.mjs',
+  refreshSetupToolReader: 'DOM-only (the reader\'s fold, scroll and focus across a re-check); driven in a real browser by scripts/e2e-projects.mjs (§2b, Check again with a reader open)',
   addSetupTool: 'orchestration: putSetupToolIds with the current list plus the pick, then reloadSetupThenOpen; the listbox cfg it is picked from is executed in test-next-setup-step.js',
   putSetupToolIds: 'the tools PUT named in this file\u2019s fetch census ({ids}) \u2014 the ONE call site for add (v3.78.0) and remove (v3.80.0)',
   reloadSetupThenOpen: 'orchestration over loadSetup and openSetupToolReader (v3.80.0); the guide it opens is toolGuide/toolReaderContent, executed in test-next-setup-step.js \u00a723',
@@ -14548,13 +14400,23 @@ try {
 // Pinned to the LITERAL count phase 2 wrote. A later change that wants to
 // retire one more pin has to change this number in the same commit, which is
 // a decision on the record rather than an assertion quietly given up.
-eq('the retired list is the one phase 2 wrote (399 pins: the five-step page\'s markup)', RETIRED.size, 399);
+eq('the retired list is the one phase 2 wrote (387 pins: the five-step page\'s markup)', RETIRED.size, 387);
+// A RETIREMENT IS A FAILING PIN OF GONE MARKUP, NOTHING ELSE (builder resume,
+// 2026-11-27). A crash key would hide every assertion after the throw, so it
+// may never be retired; a retired pin that no longer runs, or now passes, is
+// stale and must leave the list (otherwise the list grows into a blanket).
+ok('no crash is retired — a block that throws is always a failure',
+  [...RETIRED].every((k) => !k.includes(':: a block ran to the end')));
+ok('every retired pin still RUNS and still FAILS (no stale or vacuous retirement)',
+  [...RETIRED].every((k) => retiredHit.has(k) && !retiredPassed.has(k)),
+  [...RETIRED].filter((k) => !retiredHit.has(k) || retiredPassed.has(k)).slice(0, 5).join(' | '));
 
 // ── Done ─────────────────────────────────────────────────────────────────
 
 cleanup();
 console.log('\n' + '─'.repeat(60));
 console.log('Passed: ' + passed + '   Failed: ' + failed + '   Retired (their page is gone): ' + retired);
+if (process.env.MEMORY_VIEW_DUMP_RETIRED) writeFileSync(process.env.MEMORY_VIEW_DUMP_RETIRED, JSON.stringify({ hit: [...retiredHit], passed: [...retiredPassed] }, null, 1));
 if (process.env.MEMORY_VIEW_DUMP_FAILED) writeFileSync(process.env.MEMORY_VIEW_DUMP_FAILED, JSON.stringify(failedKeys, null, 1));
 if (failed === 0) console.log('✅ All Agent-memory route + view assertions green');
 else console.log('❌ ' + failed + ' Agent-memory assertion(s) failed');

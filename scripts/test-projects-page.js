@@ -184,8 +184,12 @@ const agentsModel = (pro) => {
     matrix: pro ? { rows: M.agentMatrix(data, { machineWord: 'Mac' }), view: 'computer' } : null,
   };
 };
+// The outcome of a failed reading-budget save: the view (memory.js
+// prjBudgetNotices) puts the SAME notice on Starting kit (both modes) and on
+// Pro's Budget tab — the fixture does the same, so §5 sees a real pair.
+const BUDGET_FAIL = { tone: 'error', title: 'The reading budget was not changed.', line: 'The store refused the write.' };
 const kitModel = (pro) => ({
-  pro, notices: [{ tone: 'attention', title: 'The always-read documents are over their budget.', line: 'They are 70 KB of a 64 KB budget.' }],
+  pro, notices: [{ tone: 'attention', title: 'The always-read documents are over their budget.', line: 'They are 70 KB of a 64 KB budget.' }, BUDGET_FAIL],
   brief: { meta: M.briefMeta({ present: true, words: 3038 }) },
   documents: { meta: M.documentsMeta({ count: 9, readFirstCount: 2, hiddenCount: 0 }) },
   knowledge: { meta: 'Work · 1,070 pages an agent can search' },
@@ -201,7 +205,7 @@ const pages = (pro) => {
   if (pro) {
     tabs.history = P.historyPanel({ rows: M.historyRows(read().scopes), harnesses: ['Claude Code', 'Cursor'], canDelete: true,
       summary: M.connectionsSummary({ totals: { sessions: 11, read: 7, saved: 11, readNoSave: 0 } }) });
-    tabs.budget = P.budgetPanel({ layers: [{ layer: 'Brief', tokens: '≈4.9k', tokenCount: 4900, size: '19 KB', bytes: 19500, share: '0.5%' }] });
+    tabs.budget = P.budgetPanel({ notices: [BUDGET_FAIL], layers: [{ layer: 'Brief', tokens: '≈4.9k', tokenCount: 4900, size: '19 KB', bytes: 19500, share: '0.5%' }] });
     tabs.computers = P.computersPanel({ rows: M.computerRows(demo()), routes: M.TRAVEL_ROUTES, repo: null, pending: 2, syncConfigured: true });
   }
   return tabs;
@@ -229,6 +233,8 @@ section('§4 the layouts — Simple and Pro from one model');
     ok(!/\bscopes?\b/i.test(words(all)), mode + ': the word "scope" is gone', (words(all).match(/.{30}\bscopes?\b.{30}/i) || [''])[0]);
   }
   ok(/kit-table/.test(pages(true).agents) && !/kit-table/.test(pages(false).agents), 'Agents: rows in Simple, the check table in Pro');
+  ok(words(pages(true).budget).includes('The reading budget was not changed.') && words(pages(false).kit).includes('The reading budget was not changed.'),
+    'CONTROL: the fixture really carries a never-hide outcome on Pro\'s Budget tab AND on Simple\'s Starting kit');
   ok(!/self-test/i.test(Object.values(pages(false)).join('')), 'Simple says nothing of "self-test calls excluded"');
   ok(!/class="[^"]*\bmono\b/.test(Object.values(pages(false)).join('')), 'Simple draws no monospace meter table');
 }
@@ -333,6 +339,91 @@ section('§9 every to-fix line is a notice in BOTH modes, with its own fix');
     ok(data.toFix.every((f) => M.noticeTitle(M.plainText(f.text)).every((part) => !part || words(html).includes(part))), (pro ? 'Pro' : 'Simple') + ': every to-fix line is on the Agents tab, in full (title and line)');
     ok(/2 files are only on this computer\./.test(words(html)), (pro ? 'Pro' : 'Simple') + ': "2 files are only on this computer" with Sync now');
   }
+}
+
+section('§10 behaviours carried over from the retired five-step pins');
+{
+  // The note is ON THE PAGE now (ANALYSIS §A1 #5 reverses v3.56.0's "off the page").
+  const html = P.nowPanel({ hasSave: true, notices: [], earlier: [],
+    handoff: { title: 'Checkout flow', bodyHtml: '<p>UNIQUE-BODY-MARKER</p>', footer: 'Claude Code · this Mac · 27 min ago' } });
+  ok(html.includes('UNIQUE-BODY-MARKER') && /class="prj-handoff-title">Checkout flow</.test(html), 'the latest handoff\'s body and title are printed on the Now tab');
+  ok(/Saved · Claude Code · this Mac · 27 min ago/.test(words(html)), 'its footer says who, where and when, "Saved" as words');
+  ok(/data-prj-act="copy-continue"/.test(html) && /data-prj-act="open-note"/.test(html), 'Copy "continue" prompt and Open the full note are on the card');
+  // A trimmed save is LOSS; a replacement is not — the label discriminates (old §7b).
+  const tr = M.nowNotices({ lastSaveKind: 'trimmed' })[0];
+  const rp = M.nowNotices({ lastSaveKind: 'replaced' })[0];
+  const cl = M.nowNotices({ lastSaveKind: 'clipped' })[0];
+  ok(tr.tone === 'error' && /did not survive/.test(tr.title), 'a trimmed save is said as loss, in the error tone');
+  ok(rp.tone === 'info' && /Nothing the agent sent was lost/.test(rp.line) && !/did not survive/.test(rp.title), 'a replacement is said as a replacement, not as loss');
+  ok(cl.tone === 'info' && /Nothing in the handoff was lost/.test(cl.line), 'a clipped label is said as clipped, nothing lost');
+  // The stale-write offer (old §14): an agent SAVED; what is shown MAY not be latest; Reload offers.
+  const st = M.nowNotices({ staleWrite: true })[0];
+  ok(/saved/.test(st.title) && /may not be the latest/.test(st.line) && !/is stale/.test(st.line) && st.actions[0].label === 'Reload', 'the stale offer: an agent saved, "may not be the latest", Reload');
+  // An unaddressable entry echoes the STORE's reason verbatim (old §14).
+  ok(M.nowNotices({ unlisted: { reason: 'STORE-REASON-VERBATIM' } })[0].line === 'STORE-REASON-VERBATIM', 'the unlisted notice echoes the store\'s own reason');
+  // History: absent is not zero; the harness by its label (old §17 P2, §31 F10).
+  const h = M.historyRows([{ scope: 'x', machine: 'm', harness: 'claude-code', harnessLabel: 'Claude Code', writtenAt: iso(60e3) },
+    { scope: 'y', machine: 'm', harness: 'claude-code', writtenAt: iso(120e3) }]);
+  ok(h[0].bytes === null && /<td[^>]*>—<\/td>|>—</.test(P.historyPanel({ rows: h, harnesses: [] })), 'a note with no size says "—", never 0');
+  ok(h[0].harness === 'Claude Code' && h[1].harness === 'claude-code', 'History names the harness by its label; an older server\'s raw name is kept, not guessed');
+  // Agent connections: no usage log → "not logged", never "0".
+  ok(/^not logged/.test(M.connectionsSummary({ logPresent: false, totals: { sessions: 0 } })), 'no usage log on this computer → "not logged", not "0 agent connections"');
+  ok(/^11 agent connections/.test(M.connectionsSummary({ logPresent: true, totals: { sessions: 11, read: 7, saved: 11, readNoSave: 0 } })), 'CONTROL: a log → the counts');
+  const cn = M.connectionNotice({ data: { logPresent: true, noSessionsButSaves: true } });
+  ok(cn && cn.tone === 'attention' && cn.title.split(/\s+/).length <= 12 && /Restart the app/.test(cn.line), 'saves arrived but no connection was logged → a notice that names the fix');
+  ok(M.connectionNotice({ logPresent: true, noSessionsButSaves: false }) === null && M.connectionNotice(null) === null, 'nothing to explain → no notice');
+  for (const pro of [false, true]) {
+    const html2 = P.agentsPanel({ ...agentsModel(pro), notices: [...M.toFixNotices(demo()), cn] });
+    ok(words(html2).includes(cn.title), (pro ? 'Pro' : 'Simple') + ': the no-connection notice is on the Agents tab');
+  }
+  // Pro tiles: a figure not read yet is "…", one with no log "not logged" — never 0.
+  const t0 = M.projectTiles({});
+  ok(t0.find((c) => c.label === 'Agents').value === '…' && t0.find((c) => c.label === 'Saves').value === '…' && t0.find((c) => c.label === 'Last save').value === 'none yet',
+    'Pro tiles before their reads: "…", never 0');
+  // The loading panel invents no reading (old skeleton rule).
+  ok(/aria-busy="true"/.test(P.loadingPanel()) && !/\d/.test(words(P.loadingPanel())), 'until the read lands the tab says it is reading, with no figure');
+  // Edit on the Brief row opens TODAY's editor in the tab, in Simple (every task finishes in Simple).
+  const k = P.kitPanel({ ...kitModel(false), open: 'brief', briefEditorHtml: '<textarea id="mem-brief-text"></textarea>' });
+  ok(/data-prj-flow="briefEditorHtml"[^>]*><textarea id="mem-brief-text"/.test(k), 'Simple: Edit on Brief opens the brief editor on the Starting kit tab');
+  ok(!/mem-brief-text/.test(P.kitPanel({ ...kitModel(false), briefEditorHtml: '<textarea id="mem-brief-text"></textarea>' })), '...and only when asked');
+  ok(!/data-prj-act="brief-edit"/.test(P.kitPanel({ ...kitModel(false), readonly: true })), 'a read-only mirror is offered no Edit/Add actions');
+}
+
+section('§11 ESCAPING — hostile project, harness, headline and document names');
+{
+  const HOSTILES = ['<script>alert(1)</script>', 'x" onmouseover="alert(1)', "y' onfocus='alert(1)", '[[Wiki Link]] & <b>bold</b>'];
+  for (const H of HOSTILES) {
+    const data = demo();
+    data.tools[0].label = H;           // a harness name
+    const rd = read();
+    rd.scopes[0].headline = H;         // a handoff headline
+    rd.scopes[0].harnessLabel = H;
+    rd.scopes[1].headline = H;
+    const rows = M.harnessRows(data);
+    const sentence = M.statusSentence({ read: rd, harnessRows: rows, thisNames: M.thisComputerNames(data), machineWord: 'Mac' });
+    const html = [
+      P.renderProjectsPage({ pro: true, tab: 'now', kicker: H + ' / ' + H, title: H, sentence, counts: {}, panelHtml: '' }),
+      P.nowPanel({ hasSave: true, notices: [], handoff: { title: H, bodyHtml: '', footer: H, deleteScope: H },
+        earlier: M.earlierNotes(rd.scopes, rd.scopes[0], {}) }),
+      P.agentsPanel({ pro: false, state: 'ok', rows, notices: [] }),
+      P.agentsPanel({ pro: true, state: 'ok', rows, notices: [], matrix: { rows: M.agentMatrix(data, { machineWord: 'Mac' }), view: 'computer' } }),
+      P.historyPanel({ rows: M.historyRows(rd.scopes), harnesses: [H], canDelete: true }),
+      P.documentsTable([{ slug: H, title: H, source: 'this computer', startWord: 'Always read', tokens: '1', tokenCount: 1, updated: 'now' }]),
+      P.connectFlowHtml({ step: 'pick', harnesses: [{ id: H, label: H, meta: H, kind: 'off' }] }),
+      P.connectFlowHtml({ step: 'computer', chosen: { id: H, label: H } }),
+    ].join('\n');
+    const label = JSON.stringify(H).slice(0, 40);
+    ok(!/<script/i.test(html), label + ': no <script> element reaches the page');
+    const attrNames = [];
+    (function walk(n) { if (n.attrs) attrNames.push(...Object.keys(n.attrs)); (n.children || []).forEach(walk); })(parseHtml(html));
+    ok(!attrNames.some((a) => /^on/.test(a)) && !attrNames.some((a) => /alert|^\(1\)/.test(a)),
+      label + ': a quote cannot break out of an attribute (no element gains an on* attribute)', attrNames.filter((a) => /^on|alert/.test(a)).join(','));
+    ok(!/<b>bold<\/b>/.test(html), label + ': markup in a name is text, not markup');
+    ok(!/<a\b[^>]*>[^<]*Wiki Link/.test(html), label + ': "[[…]]" in a name stays literal (no link is made)');
+    const text = textOf(parseHtml(html));
+    ok(text.includes(H), label + ': ...and the name reads back exactly as typed (escaped once, not mangled)');
+  }
+  ok(M.continuePrompt('d', 'a"b').includes('"a"b"'), 'the copied "continue" prompt is plain text (it goes to the clipboard, not the page)');
 }
 
 console.log('\n' + (fail ? '✗' : '✓') + ' test-projects-page: ' + pass + ' passed, ' + fail + ' failed');

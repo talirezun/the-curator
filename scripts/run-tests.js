@@ -522,8 +522,8 @@ const LIVE_LOCAL = [
   // agent-app configs fingerprinted before and after. Here for the browser,
   // like its neighbours; self-skips at exit 0 when none is installed.
   'e2e-mcp-bridge.mjs',
-  // e2e-context-pro.mjs (v4.2.0 fix): Context's Pro switch in a real browser on an isolated demo workspace — "More in Pro" on steps 4 and 5 keeps the step where it was (±8 px, or as close as the page's end allows) and moves focus to it; the toast's Undo; the "in full" reader closed after Pro turned on; Re-check with a harness's reader open keeps "What Setup read" and the reader's scroll; no maintainer notes in it; focus inside the reader after "+ Add an agent harness"; no sideways scroll at 375 px in either mode. Self-skips at exit 0 without a browser.
-  'e2e-context-pro.mjs',
+  // e2e-projects.mjs (phase 2, the Projects page; REPLACES e2e-context-pro.mjs, whose five-step page is gone — its reader, focus and maintainer-note checks are folded in): the page in a real browser on an isolated demo workspace (fake HOME, its own user-data and domains dirs, CURATOR_NO_OPEN) — Simple's three tabs and the one quiet line, the note on Now, the tab strip by keyboard (focus never body), a harness row's reader and focus back on the row, ONE connect flow, the brief editor from the Starting kit, Pro's six tabs and tile strip with no PRO label, Pro off on a Pro-only tab falls back to Now, Check again with a reader open, Add an agent puts focus in its reader, no sideways scroll at 375 px in either mode. `--shots <dir>` writes the acceptance screenshots. Self-skips at exit 0 without a browser.
+  'e2e-projects.mjs',
   // e2e-wiki-health.mjs: the Wiki health measuring stick — every Health action driven with real mouse events against a STUBBED model on an isolated workspace and a fake HOME, a per-frame sampler over named landmarks (time to a visible change, landmark movement, scrollTop, outcome in view, focus, node identity, live region, overflow) judged against scripts/e2e-wiki-health.baseline.json (a stage config tightens each metric to its required threshold). Self-skips at exit 0 without a browser.
   'e2e-wiki-health.mjs',
   'test-visual-regression.js',

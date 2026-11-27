@@ -22,7 +22,7 @@
 // A check that has not answered yet is `working`; one that failed with no
 // earlier reading is `unknown`.
 
-import { fmtAge, fmtCount, fmtSize, fmtTokens } from '../../shared/format.js';
+import { fmtAge, fmtCount, fmtPages, fmtSize, fmtTokens } from '../../shared/format.js';
 import {
   harnessRowModel, toolGuideSteps, toolParts, physicalOf, removableOf, machineNamesOf,
 } from '../setup-step.js';
@@ -430,6 +430,10 @@ export const START_WORDS = Object.freeze({
 /** "9 · 2 always read, 7 when needed" — the Documents row's meta. */
 export function documentsMeta(facts) {
   const f = facts || {};
+  // A manifest that cannot be read is NOT "no documents" (the files are on
+  // disk; nothing is read from them): said in the words the old tile used.
+  if (f.manifestError && f.manifestNewer) return 'Written by a newer version of The Curator — update The Curator to read them.';
+  if (f.manifestError) return 'The documents manifest could not be read — the Starting kit says why.';
   const n = Number.isInteger(f.count) ? f.count : 0;
   if (!n) return 'No documents yet — add the ones every agent should know.';
   const rf = Number.isInteger(f.readFirstCount) ? f.readFirstCount : 0;
@@ -497,9 +501,15 @@ export function filterHistory(rows, q, harness) {
     && (!needle || [r.scope, r.harness, r.model, r.headline, r.computer].join(' ').toLowerCase().includes(needle)));
 }
 
-/** The agent connections summary in plain words (History's figure row). */
+/**
+ * The agent connections summary in plain words (History's figure row).
+ * ABSENT IS NOT ZERO: with no usage log on this computer the count is not
+ * "0 agent connections" (a reading) but "not logged" (no reading), the
+ * route's own `logPresent` arm.
+ */
 export function connectionsSummary(capture) {
   const c = capture && capture.data ? capture.data : capture;
+  if (c && c.logPresent === false) return 'not logged — there is no usage log on this computer yet';
   const t = c && c.totals;
   if (!t || !Number.isInteger(t.sessions)) return null;
   const parts = [plural(t.sessions, 'agent connection')];
@@ -507,6 +517,22 @@ export function connectionsSummary(capture) {
   if (Number.isInteger(t.saved)) parts.push(fmtCount(t.saved) + ' saved before stopping');
   if (Number.isInteger(t.readNoSave) && t.readNoSave > 0) parts.push(fmtCount(t.readNoSave) + ' read and did not save');
   return parts.join(' · ');
+}
+
+/**
+ * SAVES ARRIVED, NO CONNECTION WAS LOGGED (the route's `noSessionsButSaves`):
+ * a kit notice for the Agents tab, both modes. The route only says it when a
+ * log exists AND a save in the window cannot be accounted for, so it never
+ * blames a bridge that was never asked. Null when there is nothing to say.
+ */
+export function connectionNotice(capture) {
+  const c = capture && capture.data ? capture.data : capture;
+  if (!c || c.noSessionsButSaves !== true) return null;
+  return {
+    tone: 'attention',
+    title: 'An agent saved here, but no connection was logged.',
+    line: 'The save came through a bridge that logs no sessions. Restart the app that launched it (usually Claude Desktop), then the count starts again.',
+  };
 }
 
 // ── the Agents tab (Pro): one row per harness per computer ────────────────
@@ -621,6 +647,42 @@ export const TRAVEL_ROUTES = Object.freeze([
   { what: 'The instruction file and .curator-project', how: 'your project’s git' },
   { what: 'The agent connection, skills and hooks', how: 'set up on each computer' },
 ]);
+
+// ── Pro's tile strip ──────────────────────────────────────────────────────
+
+/**
+ * THE SIX TILES (Pro), as shared/overview.js cards. Pure: the view gathers
+ * the facts, this decides the words, so scripts/test-next-overview-kit.js
+ * renders the same cards through the real `renderOverview`.
+ *
+ *   f = { lastSave: {age, who, computer}|null, agents: {count, needYou}|null,
+ *         saves7: n|null, documents: {count, readFirst, manifestError?, manifestNewer?}, knowledge: {pages|null,
+ *         domains}, kit: {tokens, share}|null }
+ *
+ * A figure not yet read is '…' (it is coming); one that cannot be had is '—'
+ * (no usage log) — never 0, which would be a reading.
+ */
+export function projectTiles(f) {
+  const x = f || {};
+  const ls = x.lastSave;
+  const ag = x.agents;
+  const docs = x.documents || { count: 0, readFirst: 0 };
+  const kn = x.knowledge || { pages: null, domains: 0 };
+  const nd = Number.isInteger(kn.domains) ? kn.domains : 0;
+  return [
+    { label: 'Last save', value: ls && isStr(ls.age) ? ls.age : 'none yet',
+      sub: ls ? [ls.who, ls.computer].filter(isStr).join(' · ') || undefined : undefined },
+    { label: 'Agents', value: ag ? fmtCount(ag.count) : '…',
+      sub: ag ? (ag.needYou ? fmtCount(ag.needYou) + (ag.needYou === 1 ? ' needs you' : ' need you') : 'none need you') : undefined },
+    { label: 'Saves', value: x.saves7 === 'not-logged' ? 'not logged' : Number.isInteger(x.saves7) ? fmtCount(x.saves7) : '…', sub: 'last 7 days' },
+    docs.manifestError
+      ? { label: 'Documents', value: docs.manifestNewer ? 'newer version' : 'manifest unreadable', sub: docs.manifestNewer ? 'update The Curator' : undefined }
+      : { label: 'Documents', value: fmtCount(docs.count || 0), sub: fmtCount(docs.readFirst || 0) + ' always read' },
+    { label: 'Knowledge', value: Number.isInteger(kn.pages) ? fmtPages(kn.pages) : '…', sub: nd === 1 ? '1 domain' : fmtCount(nd) + ' domains' },
+    { label: 'Starting kit', value: x.kit && Number.isFinite(x.kit.tokens) ? fmtTokens(x.kit.tokens) + ' tokens' : '…',
+      sub: x.kit && isStr(x.kit.share) ? x.kit.share : undefined },
+  ];
+}
 
 // ── the sidebar ───────────────────────────────────────────────────────────
 

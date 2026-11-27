@@ -398,7 +398,7 @@ import {
 } from './projects/page.js';
 import {
   statusSentence, newestScope, harnessRows, toFixNotices, thisComputerNames, nowNotices, earlierNotes,
-  connectChecklist, documentsMeta, briefMeta, kitBudgetFigure, historyRows, filterHistory, connectionsSummary,
+  connectChecklist, documentsMeta, briefMeta, kitBudgetFigure, historyRows, filterHistory, connectionsSummary, connectionNotice, projectTiles,
   agentMatrix, agentMatrixPerHarness, computerRows, TRAVEL_ROUTES, START_WORDS, continuePrompt,
 } from './projects/model.js';
 import { activeTab, wireTabs, wireSegmented } from '../shared/tabs.js';
@@ -3390,9 +3390,8 @@ function render(token) {
 
   wire(token);
   // phase 2: the Projects page's own listeners (tabs, rows, tables, menu).
-  // typeof-guarded: suites lift render() into sandboxes that name only the
-  // collaborators they stub, the reason `wire` itself is written inline.
-  if (typeof wireProjects === 'function') wireProjects(token);
+  // Called unconditionally — a suite that lifts render() stubs it by name.
+  wireProjects(token);
   restoreFocus();
   // v3.67.0: step ④'s measurement follows the project read it describes. It
   // is asked for AFTER the paint, never on a switch's critical path.
@@ -3845,17 +3844,15 @@ function prjTiles(read) {
   return renderOverview({
     id: 'prj-ov',
     eyebrow: 'Overview',
-    cards: [
-      { label: 'Last save', value: eff && eff.seconds !== null ? formatAge(eff.seconds) : 'none yet',
-        sub: newest ? [newest.harnessLabel || newest.harness || null, newest.machine ? prjMachineName(newest.machine) : null].filter(Boolean).join(' · ') : undefined },
-      { label: 'Agents', value: rows ? fmtCount(rows.length) : '…',
-        sub: rows ? ((n) => (n ? fmtCount(n) + (n === 1 ? ' needs you' : ' need you') : 'none need you'))(rows.filter((r) => r.kind === 'needs-you').length) : undefined },
-      { label: 'Saves', value: saves7 === null ? '—' : fmtCount(saves7), sub: 'last 7 days' },
-      { label: 'Documents', value: fmtCount(facts.count), sub: fmtCount(facts.readFirstCount) + ' always read' },
-      { label: 'Knowledge', value: known ? fmtPages(pages) : '…', sub: domains.length === 1 ? '1 domain' : fmtCount(domains.length) + ' domains' },
-      { label: 'Starting kit', value: mcpT === null ? '…' : fmtTokens(mcpT) + ' tokens',
-        sub: mcpT === null ? undefined : ssPct(mcpT, contextWindowNow()) + ' of ' + windowWord(contextWindowNow()) },
-    ],
+    cards: projectTiles({
+      lastSave: newest ? { age: eff && eff.seconds !== null ? formatAge(eff.seconds) : null,
+        who: newest.harnessLabel || newest.harness || '', computer: newest.machine ? prjMachineName(newest.machine) : '' } : null,
+      agents: rows ? { count: rows.length, needYou: rows.filter((r) => r.kind === 'needs-you').length } : null,
+      saves7,
+      documents: { count: facts.count, readFirst: facts.readFirstCount, manifestError: facts.manifestError || null, manifestNewer: !!facts.manifestNewer },
+      knowledge: { pages: known ? pages : null, domains: domains.length },
+      kit: mcpT === null ? null : { tokens: mcpT, share: ssPct(mcpT, contextWindowNow()) + ' of ' + windowWord(contextWindowNow()) },
+    }),
   });
 }
 
@@ -3972,7 +3969,8 @@ function prjAgentsModel() {
     error: s && s.error,
     recheckError: data && s.error ? s.error : null,
     rows,
-    notices: data ? toFixNotices(data) : [],
+    notices: (data ? toFixNotices(data) : []).concat(((n) => (n ? [n] : []))(connectionNotice(
+      state.capture && state.capture.domain === state.activeDomain && state.capture.project === state.activeProject ? state.capture.data : null))),
     unsynced: data && data.sync && data.sync.configured && Number.isInteger(data.sync.pending) && data.sync.pending > 0 ? data.sync.pending : 0,
     checkedWords: data && data.checkedAt ? ageWordsFor(data.checkedAt, Date.now(), 'checked') : '',
     pickerHtml: data ? renderListboxHtml(setupToolPickerCfg(data, state.setupAdding === true)) : '',
@@ -4090,6 +4088,7 @@ function prjHistoryModel(read) {
     harnessPickerHtml: harnesses.length > 1 ? renderListboxHtml(prjHistoryHarnessCfg(harnesses)) : '',
     sortBy: state.historySort || null,
     summary: connectionsSummary(cap),
+    summaryLabel: 'Last ' + CAPTURE_WINDOW_DAYS + ' days',
     savesLine: sbt ? sbt.tools.map((t) => (t.label || t.id) + ' ' + fmtCount(t.events)).join(' · ')
       + (sbt.lowerBound ? ' (at least — some journals were read only from their newest part)' : '') : null,
     canDelete: !readonly,
@@ -9550,7 +9549,7 @@ function sessionMeterHtml(data, error) {
         ? '<p class="mem-ss-preview-of">' + escapeHtml('Previewing ' + src.changes + ' change'
           + (src.changes === 1 ? '' : 's') + ' from Documents at start — Apply or Discard them there.') + '</p>'
       : src.kind === 'plan'
-        ? '<p class="mem-ss-preview-of">Previewing the suggested reading plan — apply it in step 1.</p>' : '';
+        ? '<p class="mem-ss-preview-of">Previewing the suggested reading plan — apply it under Documents.</p>' : '';
     // The one-line hint the harness picker carries, said where the gap is
     // drawn, and only while the estimate is Not set.
     // v3.79.0 (contract §D): one note, always — what the figure is for.
@@ -9611,8 +9610,8 @@ function sessionNoticesHtml(data, facts, readonly) {
       : Math.round(((data.bytes && data.bytes.mcp) || 0) / 4);
     const why = sum.reason === 'nothing-read-first'
       ? 'Nothing is read first, so every budget sends the same — a budget only caps the documents '
-        + 'marked read first. Mark the two or three an agent should never start without in step 1, or '
-        + 'plan them under Documents at start below, where the meter previews them first.'
+        + 'marked read first. Mark the two or three an agent should never start without as Always read, or '
+        + 'plan them under Documents at start, where the meter previews them first.'
       : 'Every document marked read first already fits the smallest budget, so a larger one sends '
         + 'nothing more.';
     out += '<div class="tx-note mem-ss-note mem-ss-same" id="mem-ss-same">' + icon('alertCircle', 13)
@@ -9694,7 +9693,7 @@ function sessionReceivesMonitor(data, facts, compact = false) {
       sub: ssSize(brief.bytes) + ' · of the ' + tok(brief.capBytes / 4) + ' brief budget',
       depth: { amount: brief.bytes, budget: brief.capBytes,
         label: ssSize(brief.bytes) + ' of the ' + ssSize(brief.capBytes) + ' brief budget' } }
-    : { key: 'standing brief', value: 'none yet', sub: 'you write it in step 2' });
+    : { key: 'standing brief', value: 'none yet', sub: 'write it on the Starting kit tab' });
   const handoff = tier(t.handoff);
   lines.push(handoff.present === true
     ? { key: 'latest handoff', value: tok(handoff.bytes / 4),
@@ -11060,7 +11059,7 @@ async function applyPlanner(token) {
   if (done) {
     showToast({ key: 'planner-applied', tone: 'success',
       title: done + ' document' + (done === 1 ? '' : 's') + ' updated',
-      lines: ['Saved. Step 1 shows the same start states.'] });
+      lines: ['Saved. The documents list shows the same start states.'] });
   }
   if (state.activeDomain !== domain || state.activeProject !== project) return;
   await reloadActive(token);
@@ -11109,8 +11108,8 @@ function plannerFoldHtml(read, data, readonly) {
     ? ' · ' + changes.length + ' change' + (changes.length === 1 ? '' : 's') + ' not applied'
     : (rfCount && budgetBytes > 0 ? ' · ' + tok(rfTokens) + ' of the ' + tok(budgetTokens) + ' ' + budgetName : ''));
 
-  let body = '<p class="mem-pl-lead">' + escapeHtml('The planner view of step 1’s start states. '
-    + 'A change previews on the meter above; nothing is saved until you apply it, and step 1 always '
+  let body = '<p class="mem-pl-lead">' + escapeHtml('The planner view of the documents’ start states. '
+    + 'A change previews on the meter; nothing is saved until you apply it, and the documents list always '
     + 'shows what is saved.') + '</p>';
 
   body += '<div class="mem-pl-wrap"><table class="mem-pl-table" id="mem-pl-table">'

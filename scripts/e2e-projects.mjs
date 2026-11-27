@@ -208,11 +208,55 @@ try {
   step('Pro draws six tabs', JSON.stringify(proTabs) === '["now","agents","kit","history","budget","computers"]', proTabs);
   step('Pro: the tile strip, and still no PRO label on the page', await page.evaluate(() => !!document.querySelector('.prj-page .cur-ov')
     && !document.querySelector('.prj-page [data-pro-mark], .prj-page [data-pro-drawn]')));
+  await tab('now');
+  step('Pro › now: the note, plus its facts as a table (work-stream, harness, model, computer, size, file)', await page.evaluate(() =>
+    !!document.querySelector('[data-prj-panel="now"] .prj-handoff-body') && /Work-stream/.test((document.querySelector('#prj-now-facts') || {}).textContent || '')));
+  await shot('pro-now-dark');
   for (const id of ['agents', 'history', 'budget', 'computers']) {
     await tab(id);
     step('Pro › ' + id + ': data is open — a table, no fold', await page.evaluate((t) => !!document.querySelector('[data-prj-panel="' + t + '"] .kit-table')
       && !document.querySelector('[data-prj-panel="' + t + '"] > .prj-stack > details'), id));
     await shot('pro-' + id + '-dark');
+  }
+
+  // ── 2b. folded in from e2e-context-pro.mjs (retired with the five-step page) ──
+  await tab('agents');
+  {
+    // Check again with a harness's reader open: the reader is refreshed in
+    // place and "What Setup read" stays as the user left it.
+    await click('#mem-setup-tool-claude-code');
+    await until('Claude Code\'s reader', () => !!document.querySelector('#reader-root .mem-setup-evfold'), null, 8000);
+    await delay(300);
+    await page.evaluate(() => { document.querySelector('#reader-root .mem-setup-evfold').open = false; });
+    await page.evaluate(() => { const b = document.querySelector('[data-prj-panel="agents"] [data-setup-act="check"]'); if (b) b.click(); });
+    await delay(400);
+    await until('the re-check to land', () => !document.querySelector('[data-prj-panel="agents"] [data-setup-act="check"][disabled]'), null, 15000);
+    await delay(800);
+    step('Check again with a reader open: the reader stays, "What Setup read" stays shut as left', await page.evaluate(() => {
+      const f = document.querySelector('#reader-root .mem-setup-evfold'); return !!f && f.open === false; }));
+    await page.evaluate(() => document.getElementById('reader-close-btn').click());
+    await delay(400);
+  }
+  {
+    await click('#mem-setup-tool-antigravity');
+    await until('Antigravity\'s reader', () => !!document.querySelector('#reader-root .mem-setup-evfold'), null, 8000);
+    await page.evaluate(() => { document.querySelector('#reader-root .mem-setup-evfold').open = true; });
+    const t = await page.evaluate(() => document.querySelector('#reader-root .mem-setup-evbody').innerText);
+    step('Antigravity\'s "What Setup read": no maintainer notes or test dates', t.length > 40
+      && !/maintainer|observed|three separate files|not seen used|\b20\d\d-\d\d-\d\d\b/i.test(t), t.replace(/\s+/g, ' ').slice(0, 300));
+    await page.evaluate(() => document.getElementById('reader-close-btn').click());
+    await delay(400);
+  }
+  {
+    await click('#mem-setup-add');
+    await until('the Add menu', () => [...document.querySelectorAll('[role="option"]')].some((o) => /Cursor/.test(o.textContent || '')), null, 8000);
+    await page.evaluate(() => { const o = [...document.querySelectorAll('[role="option"]')].find((x) => /Cursor/.test(x.textContent || '')); if (o) o.click(); });
+    await until('Cursor\'s reader', () => !!document.querySelector('#reader-root #mem-setup-guide-h'), null, 15000);
+    await delay(400);
+    step('Add an agent: focus is INSIDE its new reader, never <body>', await page.evaluate(() =>
+      document.activeElement !== document.body && document.getElementById('reader-root').contains(document.activeElement)));
+    await page.evaluate(() => document.getElementById('reader-close-btn').click());
+    await delay(400);
   }
   // Pro off while on a Pro-only tab → Now.
   await setPro(false);
@@ -226,13 +270,13 @@ try {
   await tab('kit'); await shot('simple-kit-light');
   await setPro(true);
   await setTheme('light');
-  for (const id of ['agents', 'history', 'budget', 'computers']) { await tab(id); await shot('pro-' + id + '-light'); }
+  for (const id of ['now', 'agents', 'history', 'budget', 'computers']) { await tab(id); await shot('pro-' + id + '-light'); }
 
   // ── 4. 375 px ─────────────────────────────────────────────────────────────
   await setTheme('dark');
   await page.setViewport(375, 812, 1);
   await delay(500);
-  for (const id of ['agents', 'history', 'computers']) {
+  for (const id of ['now', 'agents', 'history', 'budget', 'computers']) {
     await tab(id);
     step('375 px, Pro › ' + id + ': no sideways scroll (tables stack)', await noSideways());
     await shot('pro-' + id + '-375');

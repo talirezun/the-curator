@@ -1,6 +1,6 @@
 {
- "reason": "Phase 2 (2026-11-27, CONTRACT-projects-v2): the five-step Context page was replaced by the Projects page. Each pin below asserted that page’s MARKUP (the numbered steps, the overview strip, the work-stream table and its window, the folds and their summaries, the per-step ⓘ panels, step ④ Session start’s composition, step 5 Setup, the sidebar figure \"domain · N scopes\") and has no subject any more. Keyed by section + label; a retired pin that passes still counts as a pass. The new page is pinned by scripts/test-projects-page.js and scripts/e2e-projects.mjs.",
- "count": 399,
+ "reason": "Phase 2 (2026-11-27, CONTRACT-projects-v2): the five-step Context page was replaced by the Projects page. Each pin below asserted that page’s MARKUP (the numbered steps, the overview strip, the work-stream table and its window, the folds and their summaries, the per-step ⓘ panels, step ④ Session start’s composition, step 5 Setup, the sidebar figure \"domain · N scopes\") and has no subject any more. Keyed by section + label; a retired pin that passes still counts as a pass. The new page is pinned by scripts/test-projects-page.js and scripts/e2e-projects.mjs. Builder resume (2026-11-27): the three blocks that crashed part-way (§16 brief, §18 \"Show N more\", §21g skeleton head) were repaired — their gone-markup assertions deleted, everything after the crash runs again — and their 11 entries (3 of them crash keys) removed. A crash may never be retired; every pin here must still run and fail (both guarded at the end of the suite).",
+ "count": 387,
  "pins": [
   "§6 — ESCAPING, through the REAL render functions :: the brief BODY is rendered through the shared markdown renderer",
   "§6 — ESCAPING, through the REAL render functions :: ...and the table still names the machine, per row, where there is one per handoff to name",
@@ -101,10 +101,6 @@
   "§16 — Projects inside a domain (v3.48.0) :: ★ two tools active on one project are BOTH named, newest first — and a tool idle for 9 days is not",
   "§16 — Projects inside a domain (v3.48.0) :: an IDLE project names the tool of its newest save",
   "§16 — Projects inside a domain (v3.48.0) :: ...and the figure and the age are two SLOTS with the mark between them, which is what a formatted sentence could not express",
-  "§16 — Projects inside a domain (v3.48.0) :: the pencil is anchored on the fold's own row, not on a toolbar of its own",
-  "§16 — Projects inside a domain (v3.48.0) :: ...and it is a real <button> with an accessible name, not a bare glyph",
-  "§16 — Projects inside a domain (v3.48.0) :: ...carrying a 14px inline SVG, because app.js has no `pencil` icon to ask for",
-  "§16 — Projects inside a domain (v3.48.0) :: CONTROL: the button's contents were actually extracted",
   "§16 — Projects inside a domain (v3.48.0) :: CONTROL: the filled page still paints five numbered heads",
   "§16 — Projects inside a domain (v3.48.0) :: CONTROL: ...and so does the skeleton",
   "§16 — Projects inside a domain (v3.48.0) :: five head rows",
@@ -125,7 +121,6 @@
   "§18 — THE AGE CLOCK, and the things it must never do :: CONTROL: the journal fold is still there, so \"no fold\" is about the handoff rather than about folds having been deleted wholesale",
   "§18 — THE AGE CLOCK, and the things it must never do :: with nothing saved, the Work-streams block says so in its own body — the missing thing is missing where you looked for it",
   "§18 — THE AGE CLOCK, and the things it must never do :: ...and the brief is still fully on the page beneath it",
-  "§18 — THE AGE CLOCK, and the things it must never do :: SETUP: the footer's click handler was bound",
   "§18 — THE AGE CLOCK, and the things it must never do :: with the agent-newest pair open the table paints the WINDOW, five rows",
   "§18 — THE AGE CLOCK, and the things it must never do :: ...in the order the agent's clock gives",
   "§18 — THE AGE CLOCK, and the things it must never do :: THE OPEN ROW IS THE FIRST ONE, so nothing had to be stretched to reach it",
@@ -225,9 +220,6 @@
   "§21 — TIER 0: the foundations block, driven :: `brief` opens from its own key",
   "§21 — TIER 0: the foundations block, driven :: `journal` opens from its own key",
   "§21 — TIER 0: the foundations block, driven :: a project with nothing saved gets a FLAT card rather than an empty fold",
-  "§21 — TIER 0: the foundations block, driven :: both renderers really emitted step ①",
-  "§21 — TIER 0: the foundations block, driven :: ...and it is the numeral and the Title-case title, in that order",
-  "§21 — TIER 0: the foundations block, driven :: the filled page offers the ⓘ in that head row",
   "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: it is step ④, \"Session start\", on the one heading rule",
   "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: before the measurement lands it SAYS it is measuring — never a figure it does not have",
   "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: the HEAD ROW holds the three things the owner sets, in order: Window · Reading budget · Harness",
@@ -351,7 +343,6 @@
   "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: v4.2 ④ the monitor trimmed a layer: ...the enlargement's label carries the \"PRO\" mark attribute, the window bar's does not",
   "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: v4.2 ④ the monitor trimmed a layer: Pro on is today's step: three pickers, the full monitor, the reach fold, no door",
   "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: v4.2 ④ the compact monitor carries no byte figures, and the start line says what is free",
-  "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: render() asks after it paints — the measurement is never on a switch's critical path",
   "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: ① opens on the Documents lead",
   "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: ② opens on the Memory lead",
   "§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER :: ③ opens on the Knowledge lead",
@@ -397,10 +388,7 @@
   "§31 — v3.76.0 truth fixes: ages from stamps, a clock that reaches every age, the brief's own time, tools from the journal, one tool name :: CONTROL: an older server with no label shows the raw name",
   "§31 — v3.76.0 truth fixes: ages from stamps, a clock that reaches every age, the brief's own time, tools from the journal, one tool name :: ★ a journal line shows the normalised tool (\"Claude Code\"), not the raw \"claude-code\"",
   "§31 — v3.76.0 truth fixes: ages from stamps, a clock that reaches every age, the brief's own time, tools from the journal, one tool name :: ...with the raw spelling as screen-reader text, the Handoffs table's pattern",
-  "§31 — v3.76.0 truth fixes: ages from stamps, a clock that reaches every age, the brief's own time, tools from the journal, one tool name :: CONTROL: an entry with no label (an older server) shows its raw name, escaped",
-  "§16 — Projects inside a domain (v3.48.0) :: a block ran to the end (it threw: Cannot read properties of undefined (reading 'replace'))",
-  "§18 — THE AGE CLOCK, and the things it must never do :: a block ran to the end (it threw: r.moreBtn._click is not a function)",
-  "§21 — TIER 0: the foundations block, driven :: a block ran to the end (it threw: Cannot read properties of null (reading '1'))"
+  "§31 — v3.76.0 truth fixes: ages from stamps, a clock that reaches every age, the brief's own time, tools from the journal, one tool name :: CONTROL: an entry with no label (an older server) shows its raw name, escaped"
  ],
  "crashedBlocks": "Three blocks whose fixture is the old page throw before their end (the old work-stream table, its footer and step 1 heading); their crash keys are retired with them, so the assertions after the crash point in those three blocks no longer run."
 }

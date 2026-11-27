@@ -443,14 +443,21 @@ section('7. Every other surface: tile, orphan notice, session-start Markdown, ch
   'view summary words (newer): "newer version", "update The Curator"');
   assert(words.foundationsWord({ manifestError: 'x' }) === 'manifest unreadable' && words.foundationsSummaryMeta({ manifestError: 'x' }) === 'manifest unreadable',
     'CONTROL view summary words (malformed): "manifest unreadable"');
-  const strip = extract('renderLayerStrip');
-  const a = strip.indexOf('if (facts.manifestError) {');
-  const b = strip.indexOf('} else if (!facts.present)', a);
-  const tile = new Function('facts', `let value = null; let sub = null; let tier = null;\n${strip.slice(a, b)}}\nreturn { value, sub, tier };`);
-  const nt = tile({ manifestError: 'x', manifestNewer: true });
-  const mt = tile({ manifestError: 'x', manifestNewer: false });
-  assert(a > 0 && b > a && nt.value === 'newer version' && nt.sub === 'update The Curator', 'DOCUMENTS tile (newer): "newer version" / "update The Curator"', JSON.stringify(nt));
-  assert(mt.value === 'manifest unreadable' && mt.sub === null, 'CONTROL DOCUMENTS tile (malformed): "manifest unreadable"', JSON.stringify(mt));
+  // PHASE 2 (Projects): the DOCUMENTS tile of the old strip (`renderLayerStrip`)
+  // is gone. The same reading is said in two places now, both from
+  // views/projects/model.js: the Starting kit's Documents row (Simple) and
+  // Pro's tile strip. Executed through the REAL model.
+  const PM = await import('../src/public/next/views/projects/model.js');
+  const dm = PM.documentsMeta({ manifestError: 'x', manifestNewer: true, count: 0 });
+  const dmm = PM.documentsMeta({ manifestError: 'x', manifestNewer: false, count: 0 });
+  assert(/newer version of The Curator/.test(dm) && /update The Curator/.test(dm) && !/No documents yet/.test(dm) && !NO_REMOVE.test(dm),
+    'Documents row (newer): "newer version … update The Curator", never "No documents yet"', dm);
+  assert(/could not be read/.test(dmm) && !/No documents yet/.test(dmm), 'CONTROL Documents row (malformed): "could not be read"', dmm);
+  const tileOf = (d) => PM.projectTiles({ documents: d }).find((c) => c.label === 'Documents');
+  const nt = tileOf({ count: 0, readFirst: 0, manifestError: 'x', manifestNewer: true });
+  const mt = tileOf({ count: 0, readFirst: 0, manifestError: 'x', manifestNewer: false });
+  assert(nt.value === 'newer version' && nt.sub === 'update The Curator', 'DOCUMENTS tile (newer): "newer version" / "update The Curator"', JSON.stringify(nt));
+  assert(mt.value === 'manifest unreadable' && mt.sub === undefined, 'CONTROL DOCUMENTS tile (malformed): "manifest unreadable"', JSON.stringify(mt));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

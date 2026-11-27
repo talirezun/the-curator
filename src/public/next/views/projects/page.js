@@ -191,7 +191,7 @@ export function nowPanel(m) {
         // is said in the footer's text rather than drawn as a chip.
         + '<span class="prj-foot-facts"><span class="prj-foot-text">Saved · ' + esc(h.footer || '') + '</span></span>'
         + '<button type="button" class="prj-link" data-prj-act="open-note"' + (h.targetId ? ' id="' + esc(h.targetId) + '"' : '') + '>Open the full note ›</button>'
-        + (h.deleteScope ? '<button type="button" class="btn btn-ghost btn-xs" data-ws-delete="' + esc(h.deleteScope) + '" aria-label="' + esc('Delete the work-stream ' + h.deleteScope + '…') + '">Delete…</button>' : '')
+        + (h.deleteScope ? '<button type="button" class="btn btn-ghost btn-xs" data-ws-delete="' + esc(h.deleteScope) + '" aria-label="' + esc('Delete handoff ' + h.deleteScope + '…') + '">Delete…</button>' : '')
       + '</footer>'
       + facts,
       'The latest note'));
@@ -390,7 +390,7 @@ export function historyPanel(m) {
     + '</div>');
   if (m.summary || m.savesLine) {
     out.push(table({ id: 'prj-history-figures', caption: 'Agent connections', columns: [{ id: 'k', label: 'Reading' }, { id: 'v', label: 'Value' }],
-      rows: [m.summary ? { id: 's', cells: { k: 'Last 7 days', v: m.summary } } : null,
+      rows: [m.summary ? { id: 's', cells: { k: m.summaryLabel || 'Agent connections', v: m.summary } } : null,
         m.savesLine ? { id: 'b', cells: { k: 'Saves by harness', v: m.savesLine } } : null].filter(Boolean) }));
   }
   out.push(table({
@@ -413,7 +413,7 @@ export function historyPanel(m) {
       computer: r.computer || '—',
       size: { text: r.bytes === null ? '—' : fmtSize(r.bytes), sort: r.bytes },
       del: m.canDelete ? { html: '<button type="button" class="btn btn-ghost btn-xs" data-ws-delete="' + esc(r.scope) + '" aria-label="'
-        + esc('Delete the work-stream ' + r.scope + '…') + '">Delete…</button>' } : '',
+        + esc('Delete handoff ' + r.scope + '…') + '">Delete…</button>' } : '',
     } })),
   }));
   if (!(m.rows || []).length) out.push('<p class="prj-sub">No note matches.</p>');

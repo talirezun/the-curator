@@ -429,16 +429,25 @@ try {
   const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   {
-    const row = new Function('escapeHtml', 'icon', 'freshnessTier', 'renderDepthCell',
-      lift('formatAge') + '\n' + lift('effectiveSave') + '\n' + lift('freshDotHtml') + '\n' + lift('wsRowHtml') + '\nreturn wsRowHtml;')(
-      escapeHtml, (n) => '<svg data-icon="' + n + '"></svg>', () => 'fresh', () => '');
-    const s = { scope: 'a"b', machine: 'm1', writtenAgeSeconds: 60, bytes: 10 };
-    const w = row(s, null, null, null, null, true);
-    ok('a writable row carries ONE neutral .row-act trash, with the scope escaped',
-      (w.match(/class="row-act mem-ws-del"/g) || []).length === 1 && w.includes('data-ws-delete="a&quot;b"')
-      && w.includes('data-icon="trash"'), w);
-    ok('...labelled for the handoff, not this row\'s machine', w.includes('aria-label="Delete handoff a&quot;b…"'));
-    ok('a read-only row carries NO trash at all', !/row-act|data-ws-delete/.test(row(s, null, null, null, null, false)));
+    // PHASE 2 (Projects, 2026-11-27): the work-stream table and its per-row
+    // trash (`wsRowHtml`) are gone. A handoff is deleted from the two places
+    // that show one now — the Now card's footer and Pro's History table — and
+    // both draw the SAME `data-ws-delete` press that `bindWorkStreamRows`
+    // (driven below) opens the card from. Driven through the REAL page.js.
+    const P = await import('../src/public/next/views/projects/page.js');
+    const card = (deleteScope) => P.nowPanel({ hasSave: true, notices: [], earlier: [],
+      handoff: { title: 'T', bodyHtml: '<p>b</p>', footer: 'x', deleteScope } });
+    const w = card('a"b');
+    ok('the Now card carries ONE delete press for the handoff on it, with the name escaped',
+      (w.match(/data-ws-delete=/g) || []).length === 1 && w.includes('data-ws-delete="a&quot;b"'), w);
+    ok('...labelled for the handoff', w.includes('aria-label="Delete handoff a&quot;b…"'), w);
+    ok('...a neutral ghost button, never red (the red is the confirm\'s only)', /class="btn btn-ghost btn-xs" data-ws-delete=/.test(w) && !/btn-danger/.test(w));
+    ok('no handoff to delete (a read-only mirror: the view passes no scope) → NO press at all', !/data-ws-delete/.test(card(null)));
+    const rows = [{ id: 'note:a', scope: 'a"b', machine: 'm1', harness: 'Claude Code', model: '', headline: 'h', bytes: 10, seconds: 60, when: '1 min ago', computer: 'this Mac' }];
+    const hist = P.historyPanel({ rows, harnesses: [], canDelete: true });
+    ok('History: one delete press per row, the same data-ws-delete and label',
+      (hist.match(/data-ws-delete="a&quot;b"/g) || []).length === 1 && hist.includes('aria-label="Delete handoff a&quot;b…"'), hist);
+    ok('History on a read-only mirror (canDelete false) carries NO press', !/data-ws-delete/.test(P.historyPanel({ rows, harnesses: [], canDelete: false })));
   }
 
   function harness(fetchImpl) {

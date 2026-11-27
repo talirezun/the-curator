@@ -715,435 +715,56 @@ section('§7 — Opening a work-stream row: no main-column repaint, and the patc
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§8 — patchOpenPair writes what a full render would paint');
+section('§8 — patchOpenPair is ONE paint now (phase 2, Projects)');
 // ═════════════════════════════════════════════════════════════════════════
 //
-// The whole safety argument for patching rather than rendering is that the two
-// agree. Driven against a DOM model: the patch runs, and what it left in the
-// model is compared with what the shipped `renderProject` composes for the
-// same state. Anything the patch does not reach has to be proven not to move.
+// PHASE 2 (2026-11-27): the page behind the reader no longer prints the open
+// pair in a table a patch could move in place (the work-stream table, its
+// window and its journal fold are gone; the Now card keeps the NEWEST note,
+// whichever pair the reader is on). So `patchOpenPair` is one render when the
+// mount is current and nothing when it is not. Its old DOM-equivalence block
+// (and §9's skeleton, §10's second "Show more" copy) had no subject and were
+// deleted; the shipped function is driven here instead of being trusted.
 {
-  // A DOM model, deliberately dumb. `innerHTML` is a string; `children` is
-  // re-derived by counting `<tr`; `querySelector` knows the handful of
-  // selectors the shipped code uses and nothing else — an unknown selector
-  // returns null rather than guessing, so a new one shows up as a fallback to
-  // a full render rather than as a silent miss.
-  function el(tag) {
-    const node = {
-      tagName: tag, _html: '', _listeners: 0,
-      get innerHTML() { return this._html; },
-      set innerHTML(v) { this._html = String(v); },
-      get children() {
-        const n = (this._html.match(/<tr\b/g) || []).length;
-        return Array.from({ length: n }, () => ({}));
-      },
-      addEventListener() { this._listeners++; },
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      outerHTML: '',
-    };
-    return node;
-  }
-
-  const tbody = el('tbody');
-  const stack = el('div');
-  // ── AND THERE IS NO FOLD IN THE STACK ANY MORE (v3.65.1, D2) ─────────
-  // Through v3.65.0 the stack held a `<details data-mem-fold="saved">` and the
-  // patch re-attached its `toggle` listener by hand, because `wire` binds those
-  // once per render and this patch deliberately does not render. "Last saved"
-  // is deleted; what the stack holds is warnings and disclosures, and
-  // `renderMonitor` emits NO `<details>` at all, by contract.
-  //
-  // The stub still ANSWERS the old selector, deliberately, and the assertion
-  // below inverts: if the shipped code goes looking for that fold again, this
-  // model hands one over and the listener count rises — so a re-introduced
-  // re-bind is caught rather than silently passing on a stub that returns null
-  // to everything.
-  const savedFold = el('details');
-  stack.querySelector = (sel) => (sel.includes('data-mem-fold="saved"') ? savedFold : null);
-  const count = el('div');
-  const fold = el('details');
-  const parsedNodes = [];
-
-  const doc = {
-    getElementById: (id) => ({ 'mem-ws-body': tbody, 'mem-ws-count': count }[id] || null),
-    // ── THE JOURNAL'S SELECTOR MOVED (v3.62.0, §6.6) ──────────────────
-    // It was `.settings-block-memory-journal .settings-block-body` and that
-    // block does not exist: the journal is a FOLD inside step ②. A selector
-    // that stops matching does not throw and does not red a suite — it bails
-    // to one full render, silently, leaving the page correct and v3.57.0's
-    // measured win quietly gone. This model answers the NEW selector and
-    // nothing else, so the old one would fall through to null and the
-    // returned reason below would say so.
-    querySelector: (sel) => {
-      if (sel.includes('mem-status-stack')) return stack;
-      if (sel.includes('context-state') && sel.includes('data-mem-fold="journal"')) return fold;
-      return null;
-    },
-    createElement: () => {
-      const n = el('div');
-      n.querySelector = (sel) => (sel.includes('mem-fold')
-        ? { innerHTML: n._html, querySelector: () => null } : null);
-      parsedNodes.push(n);
-      return n;
-    },
-  };
-
-  const st = freshStateStub({
-    activeDomain: 'acme', activeProject: 'alpha',
-    projects: [{ domain: 'acme', project: 'alpha', hasBrief: true, scopeCount: 2, savedCopies: 2 }],
-    projectRead: payload('alpha', PAIRS_A, OPEN_A),
-    detail: payload('alpha', PAIRS_A, PAIRS_A[1]).open,
-    scope: 'alpha-old', machine: 'box-b',
-  });
-  // Seed the tbody with the number of rows the window paints, so the
-  // "would the window have to grow?" precondition holds.
-  tbody.innerHTML = '<tr></tr><tr></tr>';
-
-  const api = new Function(
-    'state', 'document', 'isCurrentMount', 'render', 'bindWorkStreamRows',
-    'reportAsyncMountFailure', 'loadScope', 'escapeHtml', 'icon', 'renderReadout',
-    'renderDescription', 'renderMarkdown', 'freshnessStep', 'freshnessTier',
-    // THE REAL MONITOR (v3.65.0). `renderSaveStatus` composes its explanations
-    // and its warnings through it, and §8 below compares the stack this patch
-    // WRITES against the stack `renderProject` composes byte for byte — so a
-    // stub here would make both sides agree about a component neither draws.
-    'renderMonitor',
-    'docsLinkHtml', 'JOURNAL_MORE', 'JOURNAL_PAGE', 'WS_WINDOW', 'screenSignature',
-    'let renderedSignature = null;\n'
-    + 'let renders = 0;\n'
-    + lift('effectiveSave') + '\n'
-    + lift('formatAge') + '\n'
-    + lift('workStreamOrder') + '\n'
-    + lift('wsShownCount') + '\n'
-    + lift('freshDotHtml') + '\n'
-    + lift('wsRowHtml') + '\n'
-    + lift('wsMoreHtml') + '\n'
-    + lift('renderWorkStreams') + '\n'
-    + lift('workStreamCounts') + '\n'
-    + lift('newestPair') + '\n'
-    + lift('harnessOf') + '\n'
-    + lift('firstNote') + '\n'
-    + lift('newerOnAnotherMachine') + '\n'
-    + lift('renderSaveStatus') + '\n'
-    + lift('renderStaleNotice') + '\n'
-    + lift('unlistedCount') + '\n'
-    + lift('renderUnlistedNote') + '\n'
-    + lift('splitHandoffPreamble') + '\n'
-    + lift('renderJournal') + '\n'
-    + lift('patchOpenPair') + '\n'
-    + 'return { patchOpenPair, renderSaveStatus, renderStaleNotice, renderUnlistedNote, '
-    + 'renderWorkStreams, renderJournal, workStreamCounts, workStreamOrder, wsShownCount, '
-    + 'sig: () => renderedSignature };')(
-    st, doc, () => true, () => { fellBack++; }, (root) => { bound.push(root); },
-    () => {}, async () => {},
-    (s) => String(s === undefined || s === null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
-    () => '<svg></svg>',
-    (o) => '<span class="tx-readout-value">' + o.value + '</span>',
-    (s) => '<p>' + s + '</p>',
-    (s) => '<div>' + s + '</div>',
-    () => 1, () => 'recent', renderMonitor, () => '<a>guide</a>',
-    JOURNAL_MORE, JOURNAL_PAGE, WS_WINDOW, () => 'SIG');
-
-  let fellBack = 0;
-  const bound = [];
-  // ── THE RETURNED REASON (v3.62.0, §6.6) ─────────────────────────────
-  // Every bail in `patchOpenPair` is `render(token); return;` — the page stays
-  // CORRECT and the win is gone with nothing to say so. Counting renders
-  // catches a bail only because this harness knows a full render is wrong
-  // here; the reason says WHICH precondition, which is what makes a broken
-  // selector diagnosable rather than merely visible.
-  const outcome = api.patchOpenPair(1);
-
-  eq('every precondition held, so no full render was needed', fellBack, 0);
-  eq('...and it SAYS it patched, rather than leaving the caller to infer it '
-    + 'from a render that did not happen', outcome, 'patched');
-  // v3.65.1 — see the stub's own note. The stack holds no fold now, so the
-  // patch must not go looking for one: a re-bind against a row that is not
-  // there is dead code, and a re-introduced ROW would need `wire` to bind it
-  // rather than this patch.
-  eq('the patch binds NO toggle in the stack — there is no fold left in it',
-    savedFold._listeners, 0);
-  ok('the table was repainted from the SAME row renderer the painter uses',
-    tbody.innerHTML.includes('data-mem-scope="alpha-old"')
-    && tbody.innerHTML.includes('mem-ws-row-open'), tbody.innerHTML.slice(0, 200));
-  eq('...and its rows were re-bound, scoped to the tbody', bound[0], tbody);
-  ok('step ②\'s notice stack was rewritten through the SAME expression '
-    + 'renderProject composes, so the two cannot drift',
-  stack.innerHTML === api.renderSaveStatus(st.projectRead, st.detail)
-    + api.renderStaleNotice() + api.renderUnlistedNote(st.projectRead, st.detail),
-  stack.innerHTML.slice(0, 160));
-  ok('the count line was rebuilt whole rather than edited in the middle',
-    count.outerHTML === api.workStreamCounts(st.projectRead, st.projectRead.scopes.length,
-      api.wsShownCount(api.workStreamOrder(st.projectRead.scopes), st.detail, st.wsWindow)),
-    count.outerHTML);
-  ok('the journal\'s <details> ELEMENT survived — it carries the fold listener '
-    + 'and the open state, and replacing it would drop both silently',
-  fold._html.length > 0 && fold.tagName === 'details');
-  eq('...and the signature was re-taken, so the next poll neither repaints '
-    + 'needlessly nor skips a repaint it owes', api.sig(), 'SIG');
-
-  // THE TABLE THE PATCH WRITES IS THE TABLE THE PAINTER WOULD WRITE. Compared
-  // against `renderWorkStreams`'s own rows rather than against a hand-typed
-  // expectation, which would be a second description of the markup.
-  // v3.75.0: with the row action's column, exactly as renderWorkStreamsFold
-  // calls it on a writable project — the patch derives the same flag from
-  // the same two `readonly` facts, and a painter called without it would be
-  // a different table.
-  const painted = api.renderWorkStreams(st.projectRead.scopes, st.detail, st.wsWindow,
-    st.projectRead.stateBudgetBytes, true);
-  ok('the patched rows are byte-identical to the painter\'s',
-    painted.includes(tbody.innerHTML), tbody.innerHTML.slice(0, 120));
-}
-{
-  // A MISSING PRECONDITION FALLS BACK TO ONE FULL RENDER, and writes nothing.
-  // A partial patch left on screen is worse than a repaint.
-  let renders = 0;
-  const doc = {
-    getElementById: () => null,          // no tbody: the column is not painted
-    querySelector: () => null,
-    createElement: () => ({}),
-  };
-  const api = new Function('state', 'document', 'isCurrentMount', 'render',
-    'workStreamOrder', 'wsShownCount', 'renderSaveStatus', 'renderStaleNotice',
-    'renderUnlistedNote', 'renderJournal', 'wsRowHtml', 'bindWorkStreamRows',
-    'workStreamCounts', 'screenSignature', 'reportAsyncMountFailure', 'loadScope',
-    'JOURNAL_MORE',
-    'let renderedSignature = null;\n' + lift('patchOpenPair')
-    + '\nreturn { patchOpenPair, sig: () => renderedSignature };')(
-    { projectRead: { scopes: [{ scope: 'a' }] }, detail: {}, wsWindow: 5 },
-    doc, () => true, () => { renders++; },
-    (x) => x, () => 1, () => 'S', () => '', () => '', () => '', () => '<tr></tr>',
-    () => {}, () => '', () => 'SIG', () => {}, async () => {}, 50);
-  const why = api.patchOpenPair(1);
-  eq('a precondition that does not hold falls back to exactly ONE full render',
-    renders, 1);
-  eq('...and NAMES the precondition, so a selector that has silently stopped '
-    + 'matching is diagnosable rather than merely invisible', why, 'fell-back:no-table');
-  eq('...and does not leave a signature claiming a paint that did not happen',
-    api.sig(), null);
-}
-{
-  // THE WINDOW PRECONDITION, ON ITS OWN. Opening a pair that sits BEYOND the
-  // painted window stretches the table — `wsShownCount` grows to reach the
-  // open row — and that is a structural change to the table, its footer and
-  // its count line together. The patch must refuse it and let one full render
-  // say it once; the mutation that removes the check ran GREEN until this case
-  // existed, because every other fixture happened to keep the count the same.
-  let renders = 0;
-  let wrote = 0;
-  const tbody = {
-    _html: '<tr></tr>',
-    get innerHTML() { return this._html; },
-    set innerHTML(v) { wrote++; this._html = String(v); },
-    get children() { return (this._html.match(/<tr\b/g) || []).map(() => ({})); },
-  };
-  const stack = { innerHTML: '', set: null };
-  const doc = {
-    getElementById: (id) => (id === 'mem-ws-body' ? tbody : null),
-    querySelector: (sel) => (sel.includes('mem-status-stack') ? stack : null),
-    createElement: () => ({ querySelector: () => null }),
-  };
-  const api = new Function('state', 'document', 'isCurrentMount', 'render',
-    'workStreamOrder', 'wsShownCount', 'renderSaveStatus', 'renderStaleNotice',
-    'renderUnlistedNote', 'renderJournal', 'wsRowHtml', 'bindWorkStreamRows',
-    'workStreamCounts', 'screenSignature', 'reportAsyncMountFailure', 'loadScope',
-    'JOURNAL_MORE',
-    'let renderedSignature = null;\n' + lift('patchOpenPair')
-    + '\nreturn { patchOpenPair };')(
-    // Two pairs in the list, ONE row painted: the open pair is the second, so
-    // the window has to stretch to two to reach it.
-    { projectRead: { scopes: [{ scope: 'a', machine: 'm' }, { scope: 'b', machine: 'm' }] },
-      detail: { scope: 'b', machine: 'm' }, wsWindow: 1 },
-    doc, () => true, () => { renders++; },
-    (x) => x,
-    // The SHIPPED arithmetic would return 2 here; this is that answer, so the
-    // case is about the patch's reaction to it rather than about the count.
-    () => 2,
-    () => 'S', () => '', () => '', () => '', () => '<tr></tr>',
-    () => {}, () => '', () => 'SIG', () => {}, async () => {}, 50);
-  const whyWindow = api.patchOpenPair(1);
-  eq('a press that would STRETCH the window falls back to one full render',
-    renders, 1);
-  eq('...naming the window as the precondition that failed', whyWindow, 'fell-back:window');
-  eq('...and writes nothing into the table on the way', wrote, 0);
-}
-
-{
-  // ── THE STATUS HALF'S PRESENCE GUARD, ON ITS OWN (v3.62.0, §6.6) ────────
-  //
-  // THE GAP THIS CLOSES, found by mutation: replacing that guard with `false`
-  // left every assertion here GREEN. The notice stack is `noticeHtml` now and
-  // it APPEARS and DISAPPEARS with its content — deleting the standing-brief
-  // line is what made an empty stack reachable at all — so the honest question
-  // is the journal half's question: do the markup and the DOM agree about
-  // existing? Without the guard, a pair that HAS warnings arriving on a page
-  // that has no stack element writes them nowhere and reports success: the
-  // page keeps the previous pair's notices, or none, and nothing says so.
-  let renders = 0;
-  const doc = {
-    getElementById: (id) => (id === 'mem-ws-body' ? tbodyNoStack : null),
-    // No `.mem-status-stack` in the DOM, and the journal fold present.
-    querySelector: (sel) => (sel.includes('data-mem-fold="journal"') ? foldNoStack : null),
-    createElement: () => ({ set innerHTML(v) { this._h = v; },
-      querySelector: () => ({ innerHTML: '' }) }),
-  };
-  const tbodyNoStack = {
-    _html: '<tr></tr>',
-    get innerHTML() { return this._html; },
-    set innerHTML(v) { this._html = String(v); },
-    get children() { return (this._html.match(/<tr\b/g) || []).map(() => ({})); },
-    addEventListener() {},
-  };
-  const foldNoStack = { tagName: 'details', innerHTML: '', querySelector: () => null };
-  const api = new Function('state', 'document', 'isCurrentMount', 'render',
-    'workStreamOrder', 'wsShownCount', 'renderSaveStatus', 'renderStaleNotice',
-    'renderUnlistedNote', 'renderJournal', 'wsRowHtml', 'bindWorkStreamRows',
-    'workStreamCounts', 'screenSignature', 'reportAsyncMountFailure', 'loadScope',
-    'JOURNAL_MORE',
-    'let renderedSignature = null;\n' + lift('patchOpenPair')
-    + '\nreturn { patchOpenPair };')(
-    { projectRead: { scopes: [{ scope: 'a', machine: 'm' }] },
-      detail: { scope: 'a', machine: 'm' }, wsWindow: 5 },
-    doc, () => true, () => { renders++; },
-    (x) => x, () => 1,
-    // A pair WITH something to warn about: the markup exists, the element does
-    // not, and that disagreement is the whole case.
-    () => '<section class="mem-save">trimmed</section>', () => '', () => '',
-    () => '<details data-mem-fold="journal"></details>', () => '<tr></tr>',
-    () => {}, () => '', () => 'SIG', () => {}, async () => {}, 50);
-  const why = api.patchOpenPair(1);
-  eq('warnings with nowhere to go fall back to one full render', renders, 1);
-  eq('...naming the notice slot as the precondition that failed, rather than '
-    + 'writing them nowhere and reporting success', why, 'fell-back:status-presence');
+  const calls = [];
+  const mk = (mounted) => new Function('isCurrentMount', 'render',
+    lift('patchOpenPair') + '\nreturn patchOpenPair;')(() => mounted, (t) => { calls.push(t); });
+  eq('a current mount: ONE render, with the mount token', mk(true)(7), 'rendered');
+  eq('...the token is passed through', calls.join(','), '7');
+  eq('an unmounted view paints NOTHING (a late read never writes into another view)', mk(false)(8), 'fell-back:unmounted');
+  eq('...not one render', calls.length, 1);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§9 — The skeleton reserves the height and invents no reading');
+section('§9 — No motion in the view\'s stylesheets');
 // ═════════════════════════════════════════════════════════════════════════
+// The skeleton (`renderProjectSkeleton`) is gone: until a read arrives the
+// tab says "Reading…" with aria-busy (scripts/test-projects-page.js §10). What
+// survives of this section is the rule that this view declares no animation.
 {
-  // ── THREE COLLABORATORS INSTEAD OF ONE (v3.62.0) ─────────────────────
-  // The skeleton no longer asks `renderSaveStatus` for the one reading it can
-  // paint — that line moved to the STRIP, which reads the index row itself.
-  // So the spies are the step head, the strip and step ③, and what this
-  // harness still asks is unchanged: what does the skeleton RESERVE, and does
-  // it claim anything it cannot know.
-  //
-  // ── `memStep`, NOT `renderBlock` (v3.65.0) ───────────────────────────
-  // The three numbered steps go through this view's own head composer now,
-  // because shared/block.js emits its ⓘ inside a LEDE and emits nothing at
-  // all without one — and there is no lede on this page any more (R4). The
-  // spy records what the skeleton ASKS for, so the three lede constants that
-  // used to be injected here are gone with the parameter they fed: a lede
-  // asked for would show up as a key `memStep` does not take, which is what
-  // the `data-lede` probe below now asserts the absence of.
-  const mkSkeleton = (stateObj) => new Function(
-    'state', 'memStep', 'renderLayerStrip', 'renderKnowledge', 'WS_WINDOW',
-    lift('renderProjectSkeleton') + '\nreturn { renderProjectSkeleton };')(
-    stateObj,
-    (o) => '<section data-block="' + o.id + '" data-num="' + (o.num === undefined ? '' : o.num)
-      + '" data-lede="' + (o.ledeHtml === undefined ? 'NONE' : o.ledeHtml) + '">'
-      + (o.bodyHtml || '') + '</section>',
-    // The REAL ones are driven in test-next-memory-view.js; here the question
-    // is what the skeleton ASKS them for, so spies are honest.
-    (read) => '<!--strip:' + JSON.stringify(read) + '-->',
-    () => '<!--knowledge-->',
-    WS_WINDOW).renderProjectSkeleton();
-
-  const withRow = mkSkeleton({
-    activeDomain: 'acme', activeProject: 'alpha',
-    projects: [{ domain: 'acme', project: 'alpha', hasBrief: true, savedCopies: 3, scopeCount: 2 }],
-  });
-  eq('it reserves ONE row per saved copy, so the table lands at the height it '
-    + 'was given', (withRow.match(/mem-ghost-row/g) || []).length, 3);
-  ok('the strip is the REAL renderer, asked with what is actually in hand — a '
-    + 'null project read, because that is the state this frame is in',
-  withRow.includes('<!--strip:null-->'), withRow.slice(0, 200));
-  ok('...and the three STEPS carry the same ids AND numerals the filled ones '
-    + 'do, so the block chrome does not move between the two paints',
-  withRow.includes('data-block="context-canonical" data-num="1"')
-    && withRow.includes('data-block="context-state" data-num="2"')
-    && withRow.includes('data-block="context-knowledge" data-num="3"'), withRow.slice(0, 400));
-  // ── AND IT ASKS FOR NO LEDE (v3.65.0, R4) ────────────────────────────
-  // The three sentences under the three numbered titles are gone from BOTH
-  // paints — each is the first paragraph of that step's own ⓘ now — so the
-  // skeleton asking for one would be the skeleton painting chrome the filled
-  // page does not. The spy writes the literal `NONE` when the key is absent,
-  // so an empty string passed deliberately is told apart from nothing passed.
-  eq('...and it asks for NO lede on any of the three, so the chrome it '
-    + 'reserves is the chrome the filled page paints',
-  (withRow.match(/data-lede="NONE"/g) || []).length, 3);
-  ok('every reserved region says it is still filling', (withRow.match(/aria-busy="true"/g) || []).length >= 2);
-
-  const many = mkSkeleton({
-    activeDomain: 'acme', activeProject: 'alpha',
-    projects: [{ domain: 'acme', project: 'alpha', hasBrief: false, savedCopies: 40 }],
-  });
-  eq('a project with forty saved copies reserves the WINDOW, not forty rows — '
-    + 'the table paints five', (many.match(/mem-ghost-row/g) || []).length, WS_WINDOW);
-  // THE BRIEF IS A FOLD INSIDE STEP ② NOW, so what is reserved is its GHOST
-  // PARAGRAPH rather than a block of its own. The property is unchanged:
-  // reserving space for a brief that does not exist makes the column shrink on
-  // arrival, which is the jump this function exists to remove, in the other
-  // direction. `hasBrief` rides on every index row, so this is knowledge.
-  ok('...and reserves NO standing brief when the index says there is none, or '
-    + 'the column would SHRINK on arrival', !many.includes('mem-ghost-para'));
-
-  const unknown = mkSkeleton({ activeDomain: 'acme', activeProject: 'ghost', projects: [] });
-  eq('a project the index does not carry still reserves one row rather than '
-    + 'implying the EMPTY state, which is a different screen',
-  (unknown.match(/mem-ghost-row/g) || []).length, 1);
-  ok('...and claims no standing brief it cannot know about',
-    !unknown.includes('mem-ghost-para'));
-
-  // NO MOTION. This frame lives 15-40ms; a pulse says "wait" for less time
-  // than it takes to read the word, and memory.css has carried a header
-  // promising it declares no animation since v3.9.2.
   const css = readFileSync(join(ROOT, 'src/public/next/views/memory.css'), 'utf8');
-  ok('the ghost rules declare no animation at all',
-    !/\.mem-ghost[^{]*\{[^}]*animation/.test(css));
-  ok('...and neither does anything else in this view\'s stylesheet',
-    !/^\s*animation\s*:/m.test(css.replace(/\/\*[\s\S]*?\*\//g, '')));
+  const pcss = readFileSync(join(ROOT, 'src/public/next/views/projects/projects.css'), 'utf8');
+  ok('memory.css declares no animation', !/^\s*animation\s*:/m.test(css.replace(/\/\*[\s\S]*?\*\//g, '')));
+  ok('...and neither does projects.css', !/^\s*animation\s*:/m.test(pcss.replace(/\/\*[\s\S]*?\*\//g, '')));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§10 — The two "Show more" call sites do the same thing');
+section('§10 — The journal\'s "Show more" keeps the reader where it is');
 // ═════════════════════════════════════════════════════════════════════════
-//
-// `wire()` may not name a module-level helper — it is lifted and executed
-// against hand-written stubs by test-agent-instructions.js, where a free
-// identifier is a CRASH rather than a failing assertion — so the journal's
-// "Show more" handler exists twice: once there and once in `patchOpenPair`,
-// which re-attaches it after swapping the journal's contents. Two copies is a
-// real cost, and this is what stops them drifting.
+// One call site now (`wire`; the copy in `patchOpenPair` went with the patch).
+// `keepDetail` is what stops `loadScope` nulling `state.detail` and rendering
+// before the fetch, so the Pro Now tab's journal does not vanish for the
+// round trip.
 {
-  const strip = (s) => s.replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ').trim();
-  const grab = (fnSrc) => {
-    const i = fnSrc.indexOf('state.journalLimit = JOURNAL_MORE;');
-    if (i < 0) return null;
-    // From the assignment to the end of the loadScope call that follows it.
-    const j = fnSrc.indexOf('loadScope(', i);
-    const k = fnSrc.indexOf(';', j);
-    return strip(fnSrc.slice(i, k + 1));
-  };
-  const a = grab(lift('wire'));
-  const b = grab(lift('patchOpenPair'));
-  ok('both call sites were found at all', !!a && !!b, JSON.stringify([a, b]));
-  eq('...and they do the same thing, ignoring comments and whitespace', a, b);
-  ok('CONTROL: the extracted body is a real handler, not an empty string',
-    a && a.includes('loadScope(state.scope'), a);
-  // ── AND BOTH CARRY `keepDetail` (v3.65.0) ────────────────────────────
-  // Equality above stops the two drifting APART; it says nothing about what
-  // they do. This names the one option that makes "Show more" keep the reader
-  // where they are — without it `loadScope` nulls `state.detail` and renders
-  // before the fetch, the journal fold vanishes for the round trip, the
-  // column shrinks and the scroll container clamps. Asserted on BOTH, so a
-  // revert of either is red rather than half-red.
-  ok('both call sites pass `keepDetail`, which is what stops the column '
-    + 'shrinking under the reader', /keepDetail: true/.test(a) && /keepDetail: true/.test(b),
-  JSON.stringify([a, b]));
+  const strip = (x) => x.replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ').trim();
+  const w = lift('wire');
+  const i = w.indexOf('state.journalLimit = JOURNAL_MORE;');
+  const j = w.indexOf('loadScope(', i);
+  const a = i < 0 || j < 0 ? null : strip(w.slice(i, w.indexOf(';', j) + 1));
+  ok('the handler was found', !!a, String(a));
+  ok('...it re-reads the open pair', !!a && a.includes('loadScope(state.scope'), String(a));
+  ok('...with `keepDetail`, so the column does not shrink under the reader', !!a && /keepDetail: true/.test(a), String(a));
+  ok('CONTROL: patchOpenPair no longer carries a second copy', !lift('patchOpenPair').includes('JOURNAL_MORE'));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
