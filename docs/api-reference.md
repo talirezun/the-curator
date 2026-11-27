@@ -2740,7 +2740,10 @@ compared exactly: no trim; only `..`, a trailing separator, links and, on Window
 case are folded; a repository with no record yet is checked by what it tracks). With a
 record, the sentence names that folder (`syncedFolder`) and says to set it back in Settings
 (the folder routes accept exactly that folder while connected), or to Disconnect and connect
-again; with no record, it names only Disconnect. Before, an unrecognised failure
+again; when that recorded folder is gone or a link now stands at it (`details.syncedFolderGone`,
+v4.2.1), it says so and names only making it available or Disconnect. With no record, it names
+no folder and says Settings accepts one that still holds every file Sync backs up (v4.2.1; the
+record is written only by a sync that got past the deletion guard). Before, an unrecognised failure
 answered with git's own text, home path and all. `GET /remote-status` is polled in the
 background, so it carries `remoteError` (the sentence) and `remoteErrorCode`, and never
 a `detail`.
@@ -6395,7 +6398,9 @@ The path is normalised (`..` resolved) and the **normalised** path is what is ap
 {ok: false, reason: "sync-connected", error}`, the sentence saying to open Sync, choose Disconnect,
 change the folder, then connect again. Two paths are accepted while connected: the folder already
 set (nothing changes), and the folder Sync recorded (`curator.workTree`), which is how an install in
-the `folder-changed` state gets back; in that state the sentence says only that folder is accepted. Before v4.1.2 the next Sync after a folder change committed the
+the `folder-changed` state gets back; in that state the sentence says only that folder is accepted.
+With no record yet (a connection that has not synced since v4.1.2), a folder that holds every file
+Sync backs up is accepted, and the refusal says so (v4.2.1). Before v4.1.2 the next Sync after a folder change committed the
 new folder as the whole wiki and removed every other domain from GitHub.
 
 **Error response** `400` — `{"error": "path is required"}`, or, since v3.87.1 (when this became the

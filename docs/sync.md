@@ -404,15 +404,19 @@ It checks both directions: **push** (what your GitHub backup would lose) and **p
 
 The question reads, for example: "This sync would delete 41 pages from your GitHub backup (articles 38 · research 3)." with three buttons:
 
-- **Cancel** changes nothing. Your pages and your GitHub backup stay exactly as they are.
+- **Cancel** changes nothing. Your pages and your GitHub backup stay exactly as they are. When the question was about pages on **this computer** (another computer removed them from GitHub, and you want them kept), every later sync asks again until GitHub has them back. To put them back: **Disconnect this repository**, then connect to the same repository again and choose **Merge — keep both**. The Sync page says so after Cancel.
 - **Show the pages** lists the files that would be deleted, so you can tell a clean-up you meant from a loss.
 - **Delete them** carries out the sync, deleting exactly that list. If the list has changed since you looked (another page went, or a page's content changed), Sync asks again instead of acting on the old answer.
 
 **Examples.** You delete 40 old pages on purpose and press Sync now: it asks once, you look at the list and press Delete them. You move the knowledge folder to a drive that is not plugged in and press Sync now: the folder is empty, so it would delete everything from GitHub; you press Cancel, plug the drive in and nothing was lost. Another computer reorganised a domain and removed 12 pages: your pull asks before deleting them here.
 
+**What passes without a question.** The count is per sync. Five deletions at a time, sync after sync, never ask, and a small domain emptied while another file stays in its folder is counted as files, not as a whole domain. Moving pages counts as deleting them: moving 4 pages from `concepts/` to `entities/` in a small wiki, or renaming a domain, asks once ("would delete 13 files"), and the same pages arrive under their new names when you press Delete them. A change of letter case only (`Page.md` to `page.md`) is not seen by git on a Mac at all, so GitHub keeps the old spelling.
+
 A sync you start away from the Sync page (for example the Sync button on the Context page, or something that calls Sync automatically) is stopped with the same sentence and changes nothing; open the **Sync** page and the same question is waiting there with the three buttons.
 
-Sync also records where the knowledge folder really is on disk, links followed, and refuses to run when that is a different place from the one it was connected with. A shortcut that has been re-pointed at another folder is refused rather than backed up as if it were your wiki. A pull merges exactly the version it counted, not a newer one that arrived in between.
+Sync also records where the knowledge folder really is on disk, links followed, and refuses to run when that is a different place from the one it was connected with. A shortcut that has been re-pointed at another folder is refused rather than backed up as if it were your wiki. If the folder Sync recorded is no longer there at all (it was moved or removed, or a link now stands in its place, as when a cloud provider moves its folder), Sync says so and stops; when the drive or cloud folder is only unavailable, make it available and sync again, and when you moved it yourself, Disconnect and connect again. The folder is recorded only after a sync has gone through, so a sync that was stopped records nothing. A connection made before v4.1.2 that has never synced since has no record yet; while it is connected the knowledge folder can be set back to any folder that still holds every file Sync backs up.
+
+Both checks read what GitHub has at that moment, fetched for the purpose, not git's remembered copy of it, so a git folder set up by hand (one whose `origin` does not keep a remembered copy of `main`) is checked the same way. A pull merges exactly the version it counted, not a newer one that arrived in between, and the push half of the same Sync checks that same version.
 
 ---
 
@@ -634,7 +638,7 @@ sending this folder up on top of it would throw that wiki away.
 
 ### "This sync would delete N pages" (or "...on this computer that are no longer in your GitHub backup")
 
-*(Since v4.2.1.)* Sync stopped before changing anything because it would delete a lot: more than 5 files, a whole domain, or at least 3 files that are over 10% of what it tracks. Open **Sync**, choose **Show the pages**, and read the list. If you removed those pages on purpose, press **Delete them**. If you did not, press **Cancel**: check that the knowledge folder is the right one and fully present (a drive plugged in, a cloud folder finished downloading), then sync again. See [When Sync asks before deleting](#when-sync-asks-before-deleting).
+*(Since v4.2.1.)* Sync stopped before changing anything because it would delete a lot: more than 5 files, a whole domain, or at least 3 files that are over 10% of what it tracks. Open **Sync**, choose **Show the pages**, and read the list. If you removed those pages on purpose, press **Delete them**. If you did not, press **Cancel**: check that the knowledge folder is the right one and fully present (a drive plugged in, a cloud folder finished downloading), then sync again. If the pages are on this computer and another computer removed them from GitHub, press **Cancel**, then **Disconnect this repository** and connect again with **Merge — keep both** to put them back on GitHub. See [When Sync asks before deleting](#when-sync-asks-before-deleting).
 
 ### "Pulling would overwrite N files in your domains folder"
 
