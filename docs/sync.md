@@ -404,7 +404,7 @@ It checks both directions: **push** (what your GitHub backup would lose) and **p
 
 The question reads, for example: "This sync would delete 41 pages from your GitHub backup (articles 38 · research 3)." with three buttons:
 
-- **Cancel** changes nothing. Your pages and your GitHub backup stay exactly as they are. When the question was about pages on **this computer** (another computer removed them from GitHub, and you want them kept), every later sync asks again until GitHub has them back. To put them back: **Disconnect this repository**, then connect to the same repository again and choose **Merge — keep both**. The Sync page says so after Cancel.
+- **Cancel** changes nothing. Your pages and your GitHub backup stay exactly as they are. When the question was about pages on **this computer** (another computer removed them from GitHub, and you want them kept), every later sync asks again until GitHub has them back. To put them back: **Disconnect this repository**, then connect to the same repository again and choose **Merge — keep both**, then press **Sync now**, which sends them up without asking. The Sync page says so after Cancel.
 - **Show the pages** lists the files that would be deleted, so you can tell a clean-up you meant from a loss.
 - **Delete them** carries out the sync, deleting exactly that list. If the list has changed since you looked (another page went, or a page's content changed), Sync asks again instead of acting on the old answer.
 

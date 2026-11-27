@@ -1150,7 +1150,7 @@ function wireListeners() {
     // the way that puts them back (measured: Disconnect, then Merge).
     state.actionMessage = 'Cancelled. Nothing was changed: no file was deleted here or on GitHub.' +
       (ask.details && ask.details.direction === 'in'
-        ? ' To put these pages back on GitHub, choose Disconnect this repository below, then connect to the same repository again and choose Merge \u2014 keep both.'
+        ? ' To put these pages back on GitHub, choose Disconnect this repository below, then connect to the same repository again and choose Merge \u2014 keep both, then press Sync now.'
         : '');
     render(myMountToken);
     const now = document.getElementById('btn-sync-now');
