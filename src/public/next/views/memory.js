@@ -170,14 +170,13 @@ import {
   // every live reading in the app takes. An unused import is an unadopted
   // component, which is the state `fetchOpenRouterCatalogue` shipped in.
   renderDescription, renderStatus, renderReadout,
-  renderViewHeader,
 } from '../shared/text.js';
 // ── EVERY ⓘ ON THIS PAGE IS AN EXPLAINER (v3.71.0) ──────────────────────
 // One shape, one copy file (shared/explainers.js, keys `context.*`). A panel
 // on this view is composed ONLY through these three — `memStep` takes an
 // `infoKey`, never text — and scripts/test-next-memory-view.js's adoption
 // guard fails any Context ⓘ panel whose body is not one.
-import { explainerHtml, explainerMark, explainerLabel } from '../shared/explainer.js';
+import { explainerMark } from '../shared/explainer.js';
 // (docs-links.js is no longer imported here: every link out of this page is
 // an explainer's guide card, which resolves through that same frozen table.)
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
@@ -378,7 +377,7 @@ import {
 // v3.78.0: rebuilt — to-fix notes, "+ Add an agent app" through the shared listbox,
 // the Handoffs table's parts, and a tool's evidence in the right-hand reader.
 import {
-  renderSetupBody, setupHeadHtml, setupTile, SETUP_JUMP, setupToolPickerCfg, customToolNameError,
+  setupToolPickerCfg, customToolNameError,
   toolReaderContent, setupCheckIsStale, CUSTOM_TOOL_VALUE,
   // v3.79.0 (contract §C): a Repository file and a computer, in the reader.
   fileReaderContent, computerReaderContent,
@@ -389,7 +388,7 @@ import { machineWord as thisMachine } from '../shared/platform.js';
 // v4.2 — THE APP-WIDE PRO SWITCH (shared/pro.js, package P). Steps 4 and 5 ask
 // `isPro()` at render and repaint on `onProChange`; the view never keeps its
 // own copy of the mode. `moreInProLine` is the one quiet door to what Pro adds.
-import { isPro, onProChange, moreInProLine, proAttr, proMarkAttr, proDrawnAttr, setPro } from '../shared/pro.js';
+import { isPro, onProChange, setPro } from '../shared/pro.js';
 // ── THE PROJECTS PAGE (phase 2, 2026-11-27) ─────────────────────────────────
 // The page's words are decided in views/projects/model.js and drawn from the
 // shared kit in views/projects/page.js; this view gathers its state into them.
@@ -400,7 +399,7 @@ import {
 import {
   statusSentence, newestScope, harnessRows, toFixNotices, thisComputerNames, nowNotices, earlierNotes,
   connectChecklist, documentsMeta, briefMeta, kitBudgetFigure, historyRows, filterHistory, connectionsSummary,
-  agentMatrix, agentMatrixPerHarness, computerRows, TRAVEL_ROUTES, START_WORDS, continuePrompt, sidebarFigure,
+  agentMatrix, agentMatrixPerHarness, computerRows, TRAVEL_ROUTES, START_WORDS, continuePrompt,
 } from './projects/model.js';
 import { activeTab, wireTabs, wireSegmented } from '../shared/tabs.js';
 import { wireRows } from '../shared/row.js';
@@ -3391,7 +3390,9 @@ function render(token) {
 
   wire(token);
   // phase 2: the Projects page's own listeners (tabs, rows, tables, menu).
-  wireProjects(token);
+  // typeof-guarded: suites lift render() into sandboxes that name only the
+  // collaborators they stub, the reason `wire` itself is written inline.
+  if (typeof wireProjects === 'function') wireProjects(token);
   restoreFocus();
   // v3.67.0: step ④'s measurement follows the project read it describes. It
   // is asked for AFTER the paint, never on a switch's critical path.

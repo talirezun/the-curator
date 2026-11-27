@@ -367,8 +367,9 @@ const named = [
   // is the ONE row action, `.row-act chat-conv-act`, in views/chat-list.js.
   ['views/chat-list.js', 'chat-conv-act'],
   ['shared/confirm.js', 'cfd-confirm'],
-  ['views/memory.js', 'mem-stale-btn'],
-  ['views/memory.js', 'mem-j-more'],
+  // Phase 2 (2026-11-27): memory.js's two (.mem-stale-btn "Reload", .mem-j-more
+  // "Show more") went with the five-step page; Reload is now a kit notice's
+  // action and "Show more" a .btn-ghost, both resolving the kit's border.
 ];
 for (const [file, cls] of named) {
   const hit = OCCURRENCES.find(o => o.file === file && o.tokens.has(cls));

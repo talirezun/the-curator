@@ -260,6 +260,9 @@ export const KIT_CLASSES = Object.freeze([
   'cur-ov', 'cur-ov-*', 'cur-group', 'cur-group-title', 'cur-eyebrow',
   'cur-mon', 'cur-mon-*', 'cur-depth', 'cur-depth-*', 'cur-sb-dot', 'cur-sb-dot-*',
   'fresh-*', 'tx-*', 'xp', 'xp-*', 'lb', 'lb-*', 'btn', 'btn-*', 'mono',
+  // Kit v1 (2026-11-27): the shared kit's parts — notice, status chip, row,
+  // tabs, table, object page — are kit names on every page.
+  'kit-*',
   // renderViewHeader's own historical names, on the same elements as its tx-vh-*.
   'view-eyebrow', 'view-title',
   // shell.css's screen-reader-only utility.
@@ -298,8 +301,11 @@ export const MCP_PAGE_CONTRACT = Object.freeze({
     // v3.90.0 — the page's one-line lede (`cur-section-intro`) may follow the
     // header, and its closing line (`cur-section-foot`) the last card.
     kinds: [['header', ['tx-vh']], ['lede', ['cur-section-intro']], ['overview', ['cur-ov']], ['head', ['cur-section-head']],
-      ['card', ['cur-card']], ['footer', ['cur-section-foot']]],
-    pattern: /^header( lede)? overview( head card)+( footer)?$/,
+      ['card', ['cur-card']], ['footer', ['cur-section-foot']],
+      // Phase 2 (2026-11-27, D8): ONE kit notice under the lede sends connecting
+      // an agent to Projects › Agents; the page keeps its content (phase 5).
+      ['notice', ['kit-notice']]],
+    pattern: /^header( lede)?( notice)? overview( head card)+( footer)?$/,
   },
   // v3.90.0 — the copy deck's principles (COPY-DECK-v3.90.0 §Principles).
   realButtons: { tiers: ['btn-secondary', 'btn-primary', 'btn-danger'],
@@ -310,7 +316,8 @@ export const MCP_PAGE_CONTRACT = Object.freeze({
     dataClasses: ['mono'],
   },
   noAllCaps: { exemptIn: ['cur-ov'], acronyms: ['MCP', 'AI', 'PC', 'UTC', 'JSON', 'OK', 'HTTP', 'URL', 'ID', 'CLI', 'IDE', 'API'] },
-  buttonHomes: ['cur-card', 'cur-ov'],
+  // Phase 2: the kit notice carries its own action (shared/notice.js, at most two).
+  buttonHomes: ['cur-card', 'cur-ov', 'kit-notice'],
   foldClass: 'cur-fold',
   noMonitorHead: true,
   footnotes: { classes: ['tx-desc', 'tx-note'], lastIn: ['cur-card', 'cur-fold-body'],

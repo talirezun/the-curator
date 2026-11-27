@@ -462,7 +462,12 @@ ok(selectOffenders.length === 0,
 //     "Known tools" / "Other", its last row "Custom tool…" an ACTION row (it
 //     opens a name field). One call site handed `setupToolPickerCfg`'s cfg
 //     (views/setup-step.js) that `bindSetup` mounts from again.
-const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 5, 'memory.js': 6 };
+//   · Phase 2 (2026-11-27, Projects), memory.js 6 -> 9: the page header's
+//     "···" menu (`prjMoreCfg`, action rows), History's harness filter
+//     (`prjHistoryHarnessCfg`), and the start-state cell drawn a second time
+//     in the Starting kit's documents table (the same `fndStartCfg`); step
+//     ④'s three pickers moved into the Budget tab (same builders, one call each).
+const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 5, 'memory.js': 9 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -479,7 +484,7 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 18, `EIGHTEEN adoptions across four views (found ${total})`);
+ok(total === 21, `TWENTY-ONE adoptions across four views (found ${total})`);
 
 // ── §5b — memory.js has exactly ONE picker, and it is this one ────────────
 //
@@ -513,8 +518,9 @@ ok(total === 18, `EIGHTEEN adoptions across four views (found ${total})`);
   // AND THE TWO DELETED PICKERS HAVE NOT COME BACK.
   ok(!/mem-scope-lb|mem-machine-lb/.test(memSrc),
     'the scope and machine pickers stay deleted — the table replaced them');
-  ok(/renderWorkStreams/.test(memCode) && /<table class="mem-ws-table">/.test(memSrc),
-    'CONTROL: memory.js really does render the work-stream TABLE that replaced them');
+  // Phase 2: the work-stream table became the History tab's kit table.
+  ok(/historyPanel/.test(memCode) && /id: 'prj-history'/.test(readFileSync(path.join(VIEWS, 'projects', 'page.js'), 'utf8')),
+    'CONTROL: the saved notes are a TABLE (the Projects History tab) — the pickers stay deleted');
   // AND IT DID NOT HAND-ROLL A SECOND MENU. The component emits the only
   // `role="combobox"` on this screen, so any of these three in the VIEW's own
   // markup is a menu it built itself.

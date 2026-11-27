@@ -272,7 +272,8 @@ section('§6 THE KIT GUARD — the page\'s own classes are layout only');
   ok(!/(^|[\s,}])\.(?:kit|mem)-/m.test(css), 'projects.css restyles no kit- or mem- class');
   // The rendered page, both modes: every class is kit / prj / button / listbox / known shared.
   const rendered = Object.values(pages(true)).join('') + Object.values(pages(false)).join('') + whole(true, 'now') + whole(false, 'now');
-  const KNOWN = /^(kit-|prj-|btn|visually-hidden$|is-|tx-|cur-sb-dot$|cur-ov|lb|kit$)/;
+  // xp-: the explainer's own panel (shared/explainer.js), opened by "How this works".
+  const KNOWN = /^(kit-|prj-|btn|visually-hidden$|is-|tx-|xp$|xp-|cur-sb-dot$|cur-ov|lb|kit$)/;
   const classes = [...new Set([...rendered.matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1].split(/\s+/)))];
   const odd = classes.filter((c) => !KNOWN.test(c));
   ok(odd.length === 0, 'the rendered page uses only kit, prj- layout, button and listbox classes (' + classes.length + ' checked)', odd.join(', '));

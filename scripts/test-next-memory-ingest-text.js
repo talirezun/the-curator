@@ -150,10 +150,6 @@ for (const name of ingImports) {
 // So the claim is inverted rather than dropped: the centre header must reach
 // the header component AND carry an `info` field, and the explainer must be
 // absent from the file entirely. Reverting the move reds both halves.
-ok('memory.js: renderMain builds its header with renderViewHeader',
-  callSiteCount(memSrc, 'renderViewHeader', { within: 'renderMain' }) > 0);
-ok('memory.js: ...and that header carries the mechanism explanation as its `info`',
-  /info: explainerHtml\('context\.page', \{ here: 'agent-memory' \}\)/.test(memSrc) && /infoHtml: true/.test(memSrc));
 // ── THE ONE PRIMARY, TOP RIGHT (v3.65.0, §2(5)) ──────────────────────────
 // The maintainer, with both headers side by side: *"The Copy agent
 // instructions button should be on the top right in a violet button like Ask
@@ -161,22 +157,23 @@ ok('memory.js: ...and that header carries the mechanism explanation as its `info
 // not the button: the header's action slot carries exactly one `btn-primary`,
 // it is this control, and it takes the md rung rather than `btn-xs` — the two
 // halves of "like Ask this domain", which is `btn btn-primary dm-ask-btn`.
+//
+// PHASE 2 (2026-11-27, D8): the page is the kit's OBJECT PAGE, and its one
+// primary is "+ Connect an agent" (Copy agent instructions moved into the
+// "···" menu and into the connect flow). The pattern is unchanged: ONE
+// btn-primary in the header's action slot, at the md rung, and the page
+// explains itself behind the `context.page` mark.
 {
-  const actions = (/actionsHtml: state\.activeProject[\s\S]{0,400}?: '',/.exec(memCode) || [''])[0];
-  ok('memory.js: the header\'s action slot was found (the scan is not vacuous)',
-    actions.length > 40, actions.slice(0, 120));
-  ok('memory.js: exactly ONE btn-primary in the header, and it is the copy control',
-    (actions.match(/btn-primary/g) || []).length === 1, actions);
-  ok('...carrying the copy control\'s own id, so the pattern cannot be satisfied '
-    + 'by some other button', /id="mem-copy-agent"/.test(actions), actions);
-  ok('...at the md rung, like `Ask this domain`, not the btn-xs it used to be',
-    !/btn-xs/.test(actions), actions);
-  // AND IT REACHES THE EDGE THE SAME WAY DOMAINS DOES: one declaration, the
-  // same one views/domains.css makes about `.dm-ask-btn`, because the actions
-  // group is `flex: 1` precisely so a trailing primary can push itself right.
-  ok('memory.css gives it `margin-left: auto`, the one line the pattern needs',
-    /\.mem-ask-btn\s*\{[^}]*margin-left:\s*auto/.test(memCss),
-    (/\.mem-ask-btn[^}]*\}/.exec(memCss) || [''])[0]);
+  const pg = read('views/projects/page.js');
+  const primary = (/primaryAction: ('[^\n]*'),/.exec(pg) || ['', ''])[1];
+  ok('memory.js: the centre is the object page (views/projects/page.js renderProjectsPage)',
+    callSiteCount(memSrc, 'renderProjectsPageHtml', { within: 'renderProjectsPage' }) > 0 && /objectPage\(\{/.test(pg));
+  ok('...and it explains itself behind the context.page mark', /explainerMark\('prj-page-info', 'context\.page'/.test(pg));
+  ok('exactly ONE btn-primary in the header, and it is Connect an agent',
+    (primary.match(/btn-primary/g) || []).length === 1 && /id="prj-connect"/.test(primary) && /Connect an agent/.test(primary), primary);
+  ok('...at the md rung, not btn-xs', !/btn-xs/.test(primary), primary);
+  ok('Copy agent instructions is still one press away, in the "···" menu',
+    /value: 'copy-agent', label: 'Copy agent instructions'/.test(memSrc));
 }
 // COMMENT-STRIPPED, and that is not a loosening. memory.js's own docblocks
 // explain the move and NAME the component that used to do it ("this was a
@@ -197,9 +194,6 @@ ok('memory.js: the sidebar error is a STATUS, not a hint (renderStatus inside re
 // that `renderJournal` composes no instrument of its own AND still emits the
 // figure into the summary's meta, which is what stops this becoming "the
 // count was deleted and the suite agreed".
-ok('memory.js: the journal count is the ROW\'s summary, not an instrument of its own',
-  callSiteCount(memSrc, 'renderMonitor', { within: 'renderJournal' }) === 0
-  && /countClause/.test(memSrc) && /journalMeta =\s*\n?\s*escapeHtml\(countClause\)/.test(memSrc));
 // RE-POINTED (v3.56.0), and the claim is unchanged: the handoff's provenance is
 // an INSTRUMENT. What moved is where it is painted — `renderHandoff` printed the
 // document on the page and is gone; `handoffReaderContent` composes the payload
@@ -252,260 +246,13 @@ ok('ingest.css no longer carries its copy of that rule',
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§4  BEHAVIOURAL — the real memory renderers, asserted on OUTPUT');
-// ═══════════════════════════════════════════════════════════════════════════
-// Lifted and EXECUTED with every collaborator injected, the same technique
-// test-next-memory-view.js uses. A source scan cannot distinguish an element
-// that renders from one that is merely mentioned.
-
-function lift(names, src, label) {
-  return liftFrom([[names, src, label]]);
-}
-
-/** The same, over SEVERAL sources. A screen composed of functions from two
- *  modules has to be lifted from two modules — `freshnessStep` moved to
- *  shared/age.js when the freshness scale went app-wide, and memory.js now
- *  imports it. Stubbing it instead would let this file's text-role assertions
- *  run past a mark the shipped screen really emits, which is the thing every
- *  lift in this file exists to avoid. */
-function liftFrom(groups) {
-  const all = [];
-  const bodies = groups.map(([names, src, label]) => names.map((n) => {
-    all.push(n);
-    const b = functionSource(src, n);
-    if (b === null) throw new Error(`lift: ${n} not found in ${label} — the scan would pass vacuously`);
-    return b.replace(/^export\s+/, '');
-  }).join('\n')).join('\n');
-  return bodies + '\nreturn { ' + all.join(', ') + ' };';
-}
-
-/**
- * THE HANDOFF'S MARKUP, wherever it is painted.
- *
- * v3.56.0: `renderHandoff` returned the page fragment; `handoffReaderContent`
- * returns the openReader PAYLOAD and its `bodyHtml` is the same markup, one
- * layer in. Every assertion below reads through this rather than being rewritten
- * one by one, so what each of them pins is unchanged.
- *
- * Returns '' when there is nothing to open, which is what a missing fragment
- * used to be — so an assertion that expected markup still reds.
- */
-function handoffHtml(R) {
-  const c = R.handoffReaderContent();
-  return c ? (c.bodyHtml || '') : '';
-}
-
-function memRenderers(stateObj) {
-  // `effectiveSave` joins the list because renderHandoff now reads the save
-  // time through it: the shipped field `current.savedAt` is filesystem mtime,
-  // which git rewrites on checkout, so the byline was dating every synced
-  // handoff to the moment of the pull. It falls back to mtime when no journal
-  // entry carried a time, which is what the fixtures below exercise.
-  // `renderBriefEditor` joins the list because renderBrief calls it in both
-  // branches (v3.48.0's standing-brief editor). It is LIFTED rather than
-  // stubbed for the same reason everything else here is: a stub would let
-  // this suite's text-role assertions run past markup the shipped screen
-  // emits — and this file's whole subject is which text role a sentence
-  // renders in.
-  // `freshnessStep` joins the list because the handoff's <summary> now carries
-  // the save strip's own freshness pip — the menubar widget's mark, on the web,
-  // for everyone who has no menu bar — and it is cut on formatAge's unit bands
-  // so the mark and the word can never contradict each other. It is lifted
-  // from shared/age.js rather than from memory.js, because the freshness scale
-  // went app-wide and that is where it lives now; memory.js imports it.
-  // `aboutInfoHtml` (which replaced `renderAbout`) is gone in v3.71.0: the
-  // header's ⓘ is the `context.page` explainer, rendered by the kit.
-  const body = liftFrom([
-    [['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'handoffReaderContent', 'previousHandoffHtml', 'renderJournal',
-      'renderBriefEditor', 'briefClocks', 'briefClocksHtml', 'renderBrief'], memSrc, 'memory.js'],
-    [['freshnessStep'], read('shared/age.js'), 'shared/age.js'],
-  ]);
-  return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
-    'JOURNAL_PAGE', 'JOURNAL_MORE',
-    // THE REAL MONITOR (v3.65.0, M4). The journal's count is one of its lines
-    // now, and §4's escaping battery below runs through whatever paints it —
-    // a stub would let it run past the component.
-    'renderDescription', 'renderStatus', 'renderReadout', 'renderMonitor',
-    'docsLinkHtml', body)(
-    stateObj, (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
-      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
-    () => '<svg></svg>', (s) => '<p>' + s + '</p>', () => '<div class="loader"></div>', null, 10, 50,
-    renderDescription, renderStatus, renderReadout, renderMonitor, docsLinkHtml);
-}
-
-const baseDetail = {
-  scope: 'main', machine: 'mac-1', machineIsThisMachine: true, machines: [{ machine: 'mac-1', ageSeconds: 60 }],
-  current: { present: true, text: '# T\n\n> A headline\n\n## Where things stand\n\nBody.\n',
-    savedAt: new Date(Date.now() - 7200_000).toISOString(), truncated: false, sanitisedOnRead: false },
-  journal: { returned: 3, total: 3, totalUnknown: false,
-    entries: [{ at: '2026-08-28T10:00:00.000Z', harness: 'claude-code', model: 'opus-5', headline: 'H', rejections: [] }] },
-};
-const baseState = {
-  activeProject: 'projects', scope: 'main', machine: 'mac-1', detail: baseDetail,
-  detailLoading: false, journalLimit: 10, openFolds: {},
-  projectRead: { scopes: [{ scope: 'main' }], brief: { present: false } },
-};
-
-{
-  const R = memRenderers(baseState);
-  const about = explainerHtml('context.page', { here: 'agent-memory' });
-
-  // THE PROPERTIES THE EXPLANATION MUST KEEP, NOW THAT IT IS A PANEL.
-  //
-  // Three of the four the fold was pinned on came from its <details> and have
-  // MOVED rather than gone: the affordance is still a real, keyboard-operable
-  // control and the text is still hidden on first paint — renderViewHeader
-  // emits a <button> with aria-expanded / aria-controls and a `hidden` panel,
-  // and scripts/test-next-view-header.js is where that component's own
-  // behaviour is proven. What is asserted HERE is what this view owes: the
-  // words, and the fact that they carry no caution.
-  // v3.71.0: the explainer names the tiers in the screen's own words and
-  // says who writes which; the tiers' definitions are step ②'s table and the
-  // read-only rule's long form is the guide's (the card below opens it).
-  ok('the explanation still says what the tiers are',
-    /<b>the brief<\/b>/.test(about) && /<b>Handoffs<\/b>/.test(about) && /<b>Journal<\/b>/.test(about),
-    about.slice(0, 200));
-  ok('...and who writes which — you the brief, your agents the Handoffs and the Journal',
-    /You write <b>the brief<\/b>/.test(about) && /Your agents save <b>Handoffs<\/b> and the <b>Journal<\/b>/.test(about),
-    about.slice(-400));
-  ok('the panel is CONTENT, not a container — the component owns the disclosure',
-    !/<details\b/.test(about) && !/tx-explainer/.test(about), about.slice(0, 200));
-  ok('it renders NO warning box — it explains a mechanism and carries no caution',
-    !/tx-status/.test(about));
-  ok('...and it ends with a real guide card from the frozen table, not a typed URL',
-    /<a class="xp-guide" href="https:\/\/github\.com\/[^"]*user-guide\.md#project-context--what-the-screen-shows"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/.test(about),
-    about.slice(-300));
-
-  // AND IT IS ON THE PAGE. A panel nothing passes to the header is a panel
-  // nobody can open, which a source scan for the function would not notice.
-  ok('the page itself emits NO explainer card any more',
-    !/tx-explainer/.test(handoffHtml(R) + R.renderJournal() + R.renderBrief(baseState.projectRead, false)));
-
-  // The handoff's provenance is an instrument.
-  const h = handoffHtml(R);
-  ok('the handoff renders a READOUT for when it was saved', /class="tx-readout"/.test(h), h.slice(0, 300));
-  ok('...with the age as the VALUE', /class="tx-readout-value">2 hr ago</.test(h), h.slice(0, 400));
-  // WIDENED DELIBERATELY (v3.56.0): the provenance now also names the CLOCK
-  // when the reading had to fall back to the file's timestamp, which this
-  // fixture does (a `savedAt` and no journal time). The page's own two-clock
-  // rule has always been that such a reading "says `file time` in its own
-  // provenance line, in words, rather than in a tooltip" — the save strip and
-  // every table cell did, and the handoff byline was the one place that did
-  // not. The assertion keeps its subject: harness and model are the provenance.
-  ok('...and harness + model as its PROVENANCE',
-    /class="tx-readout-prov">claude-code · opus-5/.test(h), h.slice(0, 500));
-  ok('...which also names the CLOCK when the reading fell back to the file time',
-    /class="tx-readout-prov">[^<]*file time/.test(h), h.slice(0, 500));
-  // RE-POINTED (v3.56.0). The fact is the same and it is now reachable by MORE
-  // people: it was a `title=` on the fold's stamp — hover only, so invisible to
-  // keyboard and to touch — and it is a `.visually-hidden` span in the reader,
-  // the same promotion the work-stream table's age cell already made. memory.js's
-  // `title=` allowance in test-next-header-adoption.js shrinks from 3 to 1 with
-  // this, which is the direction that ratchet permits.
-  ok('...and the exact ISO stamp is still reachable, as text rather than as a tooltip',
-    h.includes('class="visually-hidden"') && h.includes(baseDetail.current.savedAt)
-    && !/title="/.test(h), h.slice(0, 400));
-
-  // ABSENT IS NOT ZERO — the component's most load-bearing rule, at the site
-  // where this view could most easily have broken it.
-  const noProvR = memRenderers({
-    ...baseState,
-    detail: { ...baseDetail, current: { ...baseDetail.current, savedAt: null }, journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } },
-  });
-  const noProv = handoffHtml(noProvR);
-  // RE-POINTED AGAIN (v3.56.0), and the rule it enforces is still unchanged:
-  // ABSENT IS NOT ZERO. What changed is that there is no <summary> and no pip
-  // any more — the document opens in the reader — so the third assertion, which
-  // pinned the dashed ring, becomes its inverse: there is no mark to decode at
-  // all, and the words carry the whole fact.
-  //
-  // So: still no instrument (a readout states a READING, and there is none),
-  // still no invented figure, and the time is still said to be unknown in
-  // words. Every one of the three reds if an absent time is rendered as a
-  // number.
-  ok('no save time and no journal entry renders NO readout — never a figure, never a dash',
-    !/tx-readout/.test(noProv), noProv.slice(0, 400));
-  ok('...saying the time is unknown IN WORDS, rather than leaving a bare mark',
-    /time unknown/.test(noProv), noProv.slice(0, 400));
-  ok('...and no pip at all — there is no mark in the reader for a dashed ring to be',
-    !/mem-save-pip/.test(noProv), noProv.slice(0, 400));
-
-  // Each fact still shown when only the OTHER is missing: consolidating two
-  // elements into one instrument must not be able to drop one of them.
-  const onlyWho = handoffHtml(memRenderers({
-    ...baseState,
-    detail: { ...baseDetail, current: { ...baseDetail.current, savedAt: null } },
-  }));
-  ok('with no save time but a known author, the AUTHOR is still stated',
-    /tx-readout-value">claude-code · opus-5</.test(onlyWho), onlyWho.slice(0, 400));
-  const onlyWhen = handoffHtml(memRenderers({
-    ...baseState,
-    detail: { ...baseDetail, journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } },
-  }));
-  // The `!prov` half of this became false for a REASON rather than by drift —
-  // see the widening above: with no author the provenance is not empty, it is
-  // the clock. What the assertion is for is that the TIME survives when the
-  // author does not, and that is what it now says, plus the positive form of
-  // the missing author: no harness, no model.
-  ok('with a save time but no known author, the TIME is still stated',
-    /tx-readout-value">2 hr ago</.test(onlyWhen)
-    && !/claude-code/.test(onlyWhen) && !/opus-5/.test(onlyWhen), onlyWhen.slice(0, 400));
-
-  // The journal count is a figure, not a sentence — and the framing prose
-  // beside it is a description, so the two no longer share a voice.
-  const j = R.renderJournal();
-  // THE ROW'S SUMMARY SINCE v3.65.1 (D3). The ROLE is unchanged — a
-  // measurement rendered as a measurement rather than as grey prose, which is
-  // what "an explanation and a measurement no longer share one class" below is
-  // about — and the slot that carries it is the one every other row uses.
-  ok('the journal count renders in the row\'s own meta slot',
-    /<span class="mem-fold-meta"[^>]*>3 saves/.test(j), j.slice(0, 600));
-  ok('...and renderJournal draws no instrument of its own under the list',
-    !/cur-mon/.test(j) && !/mem-j-foot/.test(j), j.slice(-400));
-  ok('the journal framing renders as a DESCRIPTION', /class="tx-desc"/.test(j), j.slice(0, 500));
-  ok('an explanation and a measurement no longer share one class',
-    !/mem-quiet/.test(j), j.slice(0, 300));
-
-  // An unknown total must still not print the tail length as if it were one.
-  const unknown = memRenderers({
-    ...baseState,
-    detail: { ...baseDetail, journal: { returned: 2, total: null, totalUnknown: true, totalUnknownReason: 'journal is huge', entries: baseDetail.journal.entries } },
-  }).renderJournal();
-  ok('an unknown journal total still says UNKNOWN in the summary\'s own clause',
-    /<span class="mem-fold-meta"[^>]*>[^<]*full count unknown/i.test(unknown), unknown.slice(0, 600));
-  ok('...and still does NOT print the tail length as the total',
-    !/>2 saves<|2 saves ·(?! )/.test(unknown) && /2 saves shown/.test(unknown), unknown.slice(0, 600));
-
-  // The brief's "not written" prose is a description, not a fourth grey.
-  const brief = R.renderBrief(baseState.projectRead, false);
-  ok('the "no standing brief" prose renders as a DESCRIPTION', /class="tx-desc"/.test(brief), brief.slice(0, 300));
-}
-
-// ESCAPING, through the real path. The component escapes internally; this
-// proves the view did not opt into raw HTML where a value flows through.
-{
-  const XSS = '<img src=x onerror=alert(1)>';
-  const R = memRenderers({
-    ...baseState,
-    detail: { ...baseDetail,
-      current: { ...baseDetail.current, present: false },
-      journal: { returned: 1, total: 1, totalUnknown: false, entries: [{ at: null, harness: XSS, model: XSS, headline: XSS, rejections: [] }] } },
-    projectRead: { scopes: [], brief: { present: false } },
-  });
-  const out = handoffHtml(R) + R.renderJournal();
-  ok('the hostile fixture produced markup (not an empty string)', out.length > 300, out.length);
-  ok('no raw <img> survives anywhere in the adopted output', !/<img\s/i.test(out), out.slice(0, 300));
-}
-
-// The store's own message reaches the screen through the description role —
-// the v3.17.1 defect was this sentence being dropped entirely.
-{
-  const noHandoff = handoffHtml(memRenderers({
-    ...baseState,
-    detail: { ...baseDetail, current: { present: false }, message: 'STORE-SAYS-SO' },
-  }));
-  ok('the store’s own "nothing here" sentence is rendered, in the description role',
-    /class="tx-desc"[^>]*>[^<]*STORE-SAYS-SO/.test(noHandoff), noHandoff.slice(0, 300));
-}
+// PHASE 2 (2026-11-27): RETIRED. This section lifted the five-step page's
+// renderJournal / renderBrief / briefClocksHtml and asserted their text roles;
+// those renderers went with that page. The Projects page draws with the kit
+// (rows, notices, tables), whose text roles are pinned in
+// scripts/test-kit-parts.js, and the page itself in scripts/test-projects-page.js.
+// The handoff reader (handoffReaderContent, still shipping) is executed in
+// scripts/test-next-memory-view.js.
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§5  BEHAVIOURAL — the real ingest renderers, including the money ones');
@@ -1122,8 +869,9 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   const about = explainerHtml('context.page', { here: 'agent-memory' });
   ok('the split is stated in the MAIN header\u2019s \u24d8 — you write the brief, agents save Handoffs',
     /You write <b>the brief<\/b>/.test(about) && /Your agents save <b>Handoffs<\/b>/.test(about));
-  ok('...as the MAIN header\u2019s info panel, not as a paragraph beside it',
-    /info: explainerHtml\('context\.page'/.test(memCode));
+  // PHASE 2: the page's one mark (views/projects/page.js), not a paragraph.
+  ok('...as the page\u2019s info mark, not as a paragraph beside it',
+    /explainerMark\('prj-page-info', 'context\.page'/.test(read('views/projects/page.js')));
 }
 ok('...and the rail offers NO \u24d8 of its own any more — the component has no such option',
   !/variant: 'sidebar'/.test(memCode) && /renderSidebarHead\(\{/.test(memCode));
@@ -1225,7 +973,9 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
     // card at the foot of every branch of the page; renderViewHeader's `info`
     // panel replaces it, and `renderViewHeader` joins the list in its place so
     // the count stays honest about the roles this view really does reach.
-    ['memory.js', memSrc, ['renderDescription', 'renderStatus', 'renderReadout', 'renderViewHeader']],
+    // Phase 2: renderViewHeader LEFT memory.js's list — the page header is the
+    // kit's object page now (views/projects/page.js), and the import went too.
+    ['memory.js', memSrc, ['renderDescription', 'renderStatus', 'renderReadout']],
     // renderDescription is NO LONGER in ingest's list, and that is the point of
     // this release rather than a coverage loss: its single call site was the
     // paragraph under the <h1>. renderViewHeader replaces it as the adopted
@@ -1269,13 +1019,15 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
   // the shape this release removes, exactly as pinning renderDescription
   // would have in v3.20.0. Both halves are asserted so "adopted" cannot be
   // satisfied by having dropped the old call without making the new one.
-  ok('the Project-context sidebar is the SIDEBAR component, not the view header',
-    /renderSidebarHead\(\{\s*title: 'Project context',/.test(stripComments(memSrc))
+  // PHASE 2: the title is "Projects" and the secondary is the verb list's
+  // "Check again" (shared/verbs.js); the component is unchanged.
+  ok('the Projects sidebar is the SIDEBAR component, not the view header',
+    /renderSidebarHead\(\{\s*title: 'Projects',/.test(stripComments(memSrc))
     && !/variant: 'sidebar'/.test(stripComments(memSrc)));
   ok('...and it passes a PRIMARY and a SECONDARY, which is what made the two '
     + 'ghost buttons buttons again',
     /primary: \{\s*label: '\+ New project'/.test(stripComments(memSrc))
-    && /secondary: \{\s*label: 'Refresh'/.test(stripComments(memSrc)));
+    && /secondary: \{\s*label: 'Check again'/.test(stripComments(memSrc)));
   ok('and the sentence has NOT returned as a paragraph under that title, in EITHER shape',
     !/class="sidebar-hint">The working brief/.test(stripComments(memSrc))
     && !/renderDescription\(\s*'The working brief your agents leave/.test(stripComments(memSrc)));

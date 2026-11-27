@@ -208,7 +208,6 @@ const ALLOWED = {
   'shared/age.js': { age: 'THE age ladder (format.js re-exports it)' },
   'views/memory.js': {
     age: 'formatAge, the BYTE-IDENTICAL pinned copy of age.js (memory.js registers a view at import, so a DOM-free module cannot import it; scripts/test-sidebar-status-rows.js holds the three copies equal)',
-    tokens: 'the Session start overview tile: a body LIFTED by brace matching into two suites that may name no free identifier; §7 executes it against fmtTokens',
   },
   'shared/update-phases.js': { size: 'a DOWNLOAD PROGRESS ticker: one decimal below 100 so the figure visibly moves on a slow connection; also held by the parallel v4.2.2 update-check patch' },
   'shared/ai-run.js': { tokens: 'an ESTIMATE RANGE in whole k ("≈18k–24k"), rounded coarse on purpose so a range whose ends print alike collapses to one point; the precise figure is the meter\'s job' },
@@ -246,18 +245,10 @@ for (const [rel, [fn, via]] of Object.entries(MIGRATED)) {
   const body = new RegExp('function ' + fn + '\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}').exec(src);
   ok(imports && body && body[1].includes(via + '('), rel + ': ' + fn + '() writes through format.js ' + via + '()');
 }
-{
-  const mem = readFileSync(path.join(NEXT, 'views', 'memory.js'), 'utf8');
-  const m = /const ssK = ssRead === null \? 0 : [^\n]+\n\s*const ssValue = ssRead === null \? 'not measured'\n\s*: ('≈' \+ \(ssRead[\s\S]*?\+ 'k'\))/.exec(mem);
-  ok(!!m, 'the Session start tile\'s inline ladder is located');
-  if (m) {
-    // eslint-disable-next-line no-new-func
-    const tile = new Function('ssRead', 'const ssK = ssRead === null ? 0 : Math.round(ssRead / 100) / 10;\nreturn ' + m[1] + ';');
-    const MATRIX = [500, 6800, 8800, 10300, 20000, 99000, 205000, 873000, 1e6, 1.5e6, 2.25e6];
-    const diff = MATRIX.filter((v) => tile(v) !== fmtTokens(v));
-    ok(diff.length === 0, 'it writes what fmtTokens writes over ' + MATRIX.length + ' values', diff.map((v) => v + ': ' + tile(v) + ' vs ' + fmtTokens(v)).join(', '));
-  }
-}
+// PHASE 2 (2026-11-27): the Session start overview tile and its inline token
+// ladder went with the five-step page; the Projects page's tiles write every
+// token figure through fmtTokens (views/memory.js prjTiles), so the exception
+// and its execution above are retired with the tile.
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§8  self-test: the scanner can fail');

@@ -39,6 +39,7 @@ import { notice } from '../../shared/notice.js';
 import { table } from '../../shared/table.js';
 import { fmtAge, fmtCount, fmtSize } from '../../shared/format.js';
 import { CHECK_AGAIN, SYNC_NOW } from '../../shared/verbs.js';
+import { explainerMark, explainerWordMark } from '../../shared/explainer.js';
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
@@ -66,6 +67,39 @@ export const EMBEDDED_FLOWS = Object.freeze([
   'sessionNoticesHtml', 'repoHtml', 'customHtml', 'pickerHtml', 'deleteHtml', 'budgetPickersHtml',
   'receivesHtml', 'reachHtml', 'copyOutcomeHtml', 'mirrorsHtml',
 ]);
+
+/**
+ * ONE SENTENCE PER TAB (ANALYSIS §A3: "no one sentence per screen for a
+ * teacher"), each with its "How this works" — the explainer that was the old
+ * step's ⓘ (shared/explainers.js `context.*`), opened in place through the one
+ * ⓘ mechanism. Explanation only: never a warning, cost or outcome.
+ */
+export const TAB_LEDES = Object.freeze({
+  now: { text: 'Where the work stands — the note the last agent left.' },
+  agents: { text: 'The agents that can open this project’s notes.' },
+  kit: { text: 'What every agent reads before it does anything.' },
+  history: { text: 'Every note any agent saved, in one table.' },
+  budget: { text: 'How much of the agent’s window the starting kit takes.' },
+  computers: { text: 'Which computers hold this project, and how each part reaches them.' },
+});
+
+/** The tab's one sentence and its explainer door(s). */
+export function tabLede(tab) {
+  const l = TAB_LEDES[tab];
+  if (!l) return '';
+  // Literal keys, one call each (scripts/test-explainer-adoption.js reads them).
+  const W = 'How this works';
+  const marks = tab === 'now' ? [explainerWordMark('prj-why-now', 'context.memory', W)]
+    : tab === 'agents' ? [explainerWordMark('prj-why-agents', 'context.setup', W)]
+      : tab === 'kit' ? [explainerWordMark('prj-why-kit', 'context.session-start', W),
+        explainerWordMark('prj-why-docs', 'context.documents', 'About documents'),
+        explainerWordMark('prj-why-knowledge', 'context.knowledge', 'About knowledge')]
+        : tab === 'history' ? [explainerWordMark('prj-why-history', 'context.overview', W)]
+          : tab === 'budget' ? [explainerWordMark('prj-why-budget', 'context.session-start', W)]
+            : [explainerWordMark('prj-why-computers', 'context.setup', W)];
+  return '<div class="prj-lede"><p class="prj-lede-text">' + esc(l.text) + '</p>'
+    + marks.map((m) => m.btn).join('') + '</div>' + marks.map((m) => m.panel).join('');
+}
 
 /** The one quiet line under the tabs in Simple. */
 export const MORE_IN_PRO_LINE = 'More in Pro: every save in a table, the token budget, your computers.';
@@ -95,10 +129,12 @@ export function renderProjectsPage(m) {
       : t.id === 'history' ? m.counts && m.counts.history
         : t.id === 'computers' ? m.counts && m.counts.computers : undefined }));
   const strip = tabs({ id: TABS_ID, label: 'Project', items, active: m.tab, pro });
+  // What a project is (the old header's info mark, context.page), beside the menu.
+  const pageInfo = explainerMark('prj-page-info', 'context.page', { here: 'agent-memory' });
   const quiet = pro ? '' : '<p class="prj-quiet">' + esc(MORE_IN_PRO_LINE)
     + ' <button type="button" class="prj-link" data-prj-act="pro-on">Turn on Pro ›</button></p>';
   const body = (pro && m.tilesHtml ? m.tilesHtml : '')
-    + '<div class="prj-panel"' + tabPanelAttrs(TABS_ID, m.tab) + ' data-prj-panel="' + esc(m.tab) + '">' + (m.panelHtml || '') + '</div>'
+    + '<div class="prj-panel"' + tabPanelAttrs(TABS_ID, m.tab) + ' data-prj-panel="' + esc(m.tab) + '">' + tabLede(m.tab) + (m.panelHtml || '') + '</div>'
     + quiet;
   return '<div class="prj-page" data-prj-mode="' + (pro ? 'pro' : 'simple') + '">' + objectPage({
     identityDot: m.identityDot || '',
@@ -106,9 +142,9 @@ export function renderProjectsPage(m) {
     title: m.title,
     statusSentence: m.sentence,
     primaryAction: '<button type="button" class="btn btn-primary" id="prj-connect" data-prj-act="connect">+ Connect an agent</button>',
-    moreMenu: m.menuHtml || '',
+    moreMenu: (m.menuHtml || '') + pageInfo.btn,
     tabs: strip,
-    body,
+    body: pageInfo.panel + body,
   }) + '</div>';
 }
 

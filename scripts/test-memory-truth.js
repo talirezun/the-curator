@@ -515,7 +515,10 @@ const LIFT_VIEW = ['formatAge', 'effectiveSave', 'newestPair', 'harnessOf',
   // list has to carry is the COMPONENT rather than a local sentence builder.
   // `freshnessTier` joins it for the same reason — the pip was deleted for the
   // app-wide `.fresh-dot`, which is cut on the tier rather than on the step.
-  'firstNote', 'renderSaveStatus'];
+  'firstNote'];
+// PHASE 2 (2026-11-27): renderSaveStatus went with the five-step page; the
+// Now tab's verdicts are views/projects/model.js nowNotices (§7 below
+// drives it, and test-save-kind.js §6 pins the clipped/trimmed words).
 const LIFT_AGE = ['freshnessStep'];
 const LIFT = [...LIFT_VIEW, ...LIFT_AGE];
 const ageSrc = readFileSync(join(NEXT, 'shared/age.js'), 'utf8');
@@ -601,364 +604,31 @@ const V = lifted({});
 section('§7 — "SAVED" MAY NEVER BE SAID OVER AN INCOMPLETE SAVE');
 // ═════════════════════════════════════════════════════════════════════════
 //
-// The store trims an over-budget handoff rather than refusing it, which is the
-// right call — a refused save near the end of a context loses the handoff
-// outright — and it discloses the trim in the journal line. This is the
-// assertion that stops that disclosure being dropped one layer from the
-// surface that answers "am I saved?".
-const baseRead = {
-  scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
-  brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() },
-};
-const baseDetail = (over = {}) => {
-  const { current, ...rest } = over;
-  return {
-    scope: 'main', machine: 'boxa',
-    journal: { entries: [{ at: '2026-08-30T10:00:00.000Z', harness: 'claude-code', model: 'opus-5' }] },
-    ...rest,
-    // Spread LAST and merged rather than replaced: an earlier draft let a
-    // partial `current` override wipe the whole object, so six assertions were
-    // silently reading an empty strip and "passing" the negative half of their
-    // own controls. Fixed here rather than in the assertions.
-    current: {
-      present: true, writtenAgeSeconds: 120,
-      writtenAt: new Date(Date.now() - 120_000).toISOString(),
-      savedAt: new Date(Date.now() - 120_000).toISOString(),
-      arrivedAt: new Date(Date.now() - 120_000).toISOString(),
-      lastSaveKind: 'complete', lastSaveNotes: [], ...current,
-    },
-  };
-};
-
+// PHASE 2 (2026-11-27): the five-step page's renderSaveStatus and its strip
+// (§8, §8b here before) went with that page. The claim moves with the fact:
+// the Now tab's verdicts are views/projects/model.js nowNotices — the REAL
+// code, imported — and the rule is the same: a trimmed save is loud and
+// quotes the store's note; a replace is stated but never called a loss; a
+// complete or noted save says nothing; nothing ever claims "you are saved".
 {
-  const clean = lifted({}).renderSaveStatus(baseRead, baseDetail());
-  // ── THE READING LEFT THIS FUNCTION (v3.65.1, D2) ─────────────────────
-  // "Last saved" said what the MEMORY overview tile and the Handoffs row's
-  // summary already say, in a second shape — a card wrapping a row. The claim
-  // this section has always really made is the HONESTY one, and it moves with
-  // the fact: the screen knows when the last save happened, not whether
-  // anything has changed since, so nothing anywhere may imply otherwise.
-  eq('a healthy save paints NOTHING here — the reading is the MEMORY tile\'s', clean, '');
-  ok('and nothing left behind claims you ARE saved — this screen cannot know '
-    + 'whether anything has changed since the last save, and must not imply it does',
-  !/\bYou are saved\b/i.test(clean) && !/\bAll saved\b/i.test(clean), clean);
-  // AND THE CLAIM IS PINNED WHERE IT NOW LIVES. `renderLayerStrip`'s card ②
-  // carries `saved <age>` and its work-stream — the words, not a ratio, and
-  // never a verdict about the present.
-  ok('the MEMORY tile is what says it, in the same words',
-    /'saved ' \+ savedAge/.test(viewSrc) && /label: 'MEMORY'/.test(viewSrc),
-    (viewSrc.match(/.{0,80}label: 'MEMORY'.{0,160}/s) || [''])[0]);
-
-  const trimmed = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { lastSaveKind: 'trimmed',
-      lastSaveNotes: ['nextSteps: 3 item(s) omitted over the state size budget'] },
-  }));
-  ok('a TRIMMED save is a LOUD entry, in the danger tone, never a line you '
-    + 'have to open something to reach (v3.16.1)',
-  /cur-mon-loud cur-mon-danger/.test(trimmed) && !/<details/.test(trimmed), trimmed.slice(0, 700));
-  ok('...and the store\'s own note is quoted rather than paraphrased',
-    trimmed.includes('nextSteps: 3 item(s) omitted over the state size budget'), trimmed.slice(0, 900));
-  ok('...in the loud treatment, because the rest of the strip reads as calm',
-    /cur-mon-loud cur-mon-danger/.test(trimmed), trimmed.slice(0, 1200));
-  ok('...OUTSIDE the fold, because a warning behind a chevron is not a warning',
-    trimmed.lastIndexOf('cur-mon-loud') > trimmed.lastIndexOf('</details>')
-    || !trimmed.includes('</details>'), trimmed.slice(0, 900));
-  ok('CONTROL: the same fixture without the trim renders neither',
-    !/incomplete/.test(clean) && !clean.includes('omitted over the state size budget'));
-
-  const replaced = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { lastSaveKind: 'replaced',
-      lastSaveNotes: ['replace: deliberately overwrote a larger handoff (9000 → 400 body bytes)'] },
-  }));
-  ok('a deliberate REPLACE is stated but NOT badged as incomplete — nothing the agent sent was lost',
-    replaced.includes('replaced a larger handoff') && !/incomplete<\/span>/.test(replaced),
-    replaced.slice(0, 600));
-  // STILL A `loud` ENTRY, because it is an outcome — but in the DEFAULT tone
-  // rather than the danger one, which is the distinction that used to be
-  // carried by having a loud class or not having one.
-  ok('...and it is not given the DANGER tone either — nothing was lost',
-    /cur-mon-loud cur-mon-warn/.test(replaced) && !/cur-mon-danger/.test(replaced),
-    replaced.slice(0, 900));
-
-  const noted = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { lastSaveKind: 'noted', lastSaveNotes: ['observations: 1 item(s) stamped with the save time'] },
-  }));
-  ok('a NOTED save says nothing extra — re-warning on every normalisation is the defect this replaces',
-    !/incomplete/.test(noted) && !noted.includes('stamped with the save time'), noted.slice(0, 500));
+  const MODEL = await import('../src/public/next/views/projects/model.js');
+  const say = (o) => MODEL.nowNotices(o).map((n) => n.tone + ': ' + n.title + ' ' + (n.line || '')).join(' | ');
+  const clean = say({ lastSaveKind: 'complete' });
+  eq('a healthy save paints NOTHING here', clean, '');
+  const trimmed = say({ lastSaveKind: 'trimmed', lastSaveNote: 'nextSteps: 3 item(s) omitted over the state size budget' });
+  ok('a TRIMMED save is an ERROR notice (role=alert, never folded)', /^error: /.test(trimmed), trimmed);
+  ok('...and the store\'s own note is quoted rather than paraphrased', trimmed.includes('nextSteps: 3 item(s) omitted over the state size budget'), trimmed);
+  const replaced = say({ lastSaveKind: 'replaced', lastSaveNote: 'replace: deliberately overwrote a larger handoff' });
+  ok('a deliberate REPLACE is stated but NOT called a loss, and not in the error tone',
+    /replaced a larger handoff/.test(replaced) && /^info: /.test(replaced) && !/did not survive/.test(replaced), replaced);
+  eq('a NOTED save says nothing extra — re-warning on every normalisation is the defect this replaces', say({ lastSaveKind: 'noted' }), '');
+  const page = readFileSync(join(NEXT, 'views/projects/model.js'), 'utf8') + readFileSync(join(NEXT, 'views/projects/page.js'), 'utf8');
+  ok('nothing on the page claims you ARE saved — it cannot know whether anything changed since',
+    !/\bYou are saved\b/i.test(page) && !/\bAll saved\b/i.test(page));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§8 — The strip answers the other three questions, and only when true');
-// ═════════════════════════════════════════════════════════════════════════
-{
-  // ── WHICH CLOCK: THE EXPLANATION MOVED, AND THIS FUNCTION IS SILENT ──
-  // v3.65.1. The `clock` and `arrived here` lines were an INSTRUMENT standing
-  // unfolded above step ②'s four rows, carrying explanations and provenance —
-  // the bare block the maintainer rejected. The two-clocks paragraph is the
-  // overview's ⓘ, where it already was, and this function composes warnings
-  // only. What this section still protects is the honest half: the app must
-  // not PROMISE a marker it no longer paints.
-  const fsOnly = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { writtenAt: null, writtenAgeSeconds: null },
-  }));
-  eq('a filesystem-time reading paints NOTHING here — it is an explanation, and '
-    + 'step ② opens on its Capture row', fsOnly, '');
-  eq('CONTROL: an agent-clock reading paints nothing either, for the same reason',
-    lifted({}).renderSaveStatus(baseRead, baseDetail()), '');
-  ok('...and neither prints the words "file time", which named a provenance '
-    + 'line this view no longer has',
-  !/file time/.test(fsOnly), fsOnly);
-
-  // BOTH CLOCKS, when they genuinely disagree — the synced case. Also silent
-  // here now; the overview ⓘ tells a reader how to read an unexpected age.
-  const synced = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: {
-      writtenAgeSeconds: 3 * 3600,
-      writtenAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
-      arrivedAt: new Date(Date.now() - 30_000).toISOString(),
-      savedAt: new Date(Date.now() - 30_000).toISOString(),
-    },
-  }));
-  eq('a handoff written hours ago and pulled seconds ago is silent here too — '
-    + 'the disagreement is an explanation, and it lives in the ⓘ', synced, '');
-  ok('CONTROL: and a save that WARRANTS a warning is not silent, so the checks '
-    + 'above are about the kind of fact and not about the function being dead',
-  /cur-mon-loud/.test(lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { lastSaveKind: 'trimmed', lastSaveNotes: ['budget'] } }))),
-  'nothing reaches the page at all');
-
-  // NEWER STATE SOMEWHERE ELSE IN THIS PROJECT — the "this scope vs any
-  // scope" distinction, which is the one that catches an agent saving beside
-  // you into a scope you are not watching.
-  const elsewhere = lifted({}).renderSaveStatus({
-    ...baseRead,
-    scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 7200 },
-      { scope: 'side-quest', machine: 'boxa', writtenAgeSeconds: 120 }],
-  // v3.76.0 (F4): the age is taken from the STAMP at paint time, so the
-  // override carries the stamp its age implies (a 7200 s age over a 2-minute
-  // stamp is a payload no server sends).
-  }, baseDetail({ current: { writtenAgeSeconds: 7200, writtenAt: new Date(Date.now() - 7200_000).toISOString() } }));
-  ok('a newer scope elsewhere in the project is named',
-    /Newer state in this project:[\s\S]*side-quest/.test(elsewhere), elsewhere.slice(0, 1200));
-  ok('CONTROL: when the scope on screen IS the newest, nothing is said',
-    !/Newer state in this project/.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
-
-  // THE COLLISION LINE.
-  const collide = lifted({}).renderSaveStatus({
-    ...baseRead,
-    scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120,
-      harnessShared: true, harnesses: ['claude-code', 'opencode'] }],
-  }, baseDetail());
-  ok('two tools sharing one handoff file is stated, loudly',
-    /cur-mon-loud cur-mon-danger/.test(collide) && /Two tools are writing/.test(collide),
-    collide.slice(0, 1400));
-  ok('...naming both tools', /claude-code and opencode/.test(collide));
-  // ── THE SCOPE IS NO LONGER MARKED UP BY HAND (v3.65.0) ────────────────
-  //
-  // It was `<span class="mem-name">main</span>`, interpolated here into a
-  // sentence this function built as raw HTML — one of four such sentences,
-  // every one of them carrying a value that came off disk. `renderMonitor`
-  // escapes every field it is given and emphasises exactly ONE named field,
-  // `strongText`, so the emphasis survives the move and the hand-built markup
-  // does not. What the old assertion protected — that the scope is a
-  // distinguishable token in the sentence rather than a bare word — is now
-  // carried by the sentence naming it in the FIRST clause, and what it cost
-  // is an escaping hazard per sentence.
-  ok('...naming the work-stream, escaped by the component rather than by hand',
-    /Two tools are writing main\./.test(collide) && !/mem-name/.test(collide),
-    collide.slice(0, 900));
-  ok('...and naming the remedy, which is the user\'s to apply — in the one '
-    + 'field the component emphasises',
-    /<strong>Give each tool its own handoff\.<\/strong>/.test(collide), collide.slice(0, 1400));
-  ok('CONTROL: no sharing, no line',
-    !/Two tools are writing/.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
-
-  // ── THE STANDING-BRIEF LINE IS DELETED (v3.62.0) ────────────────────────
-  //
-  // It read "Standing brief — 6 days ago" / "— not written yet", and the brief
-  // fold's own summary one step down says exactly that, from the same two
-  // fields (`views/memory.js`'s `renderBrief`: "updated 23 hr ago · 1,309
-  // words" / "not written yet"). A figure in a sentence that the card below
-  // already shows is the de-duplication `views/domains.js` performs on the
-  // domain header. Deleted rather than moved, because there was nowhere to
-  // move it that did not already carry it.
-  //
-  // INVERTED, NOT REMOVED: what these two assertions protected was that the
-  // brief half of "am I saved?" is ALWAYS answered and never answered with an
-  // age it does not have. That property now lives on the fold summary, and
-  // what belongs here is the other half of the de-duplication — that this
-  // function no longer says it at all, so the two cannot both claim it.
-  const withBrief = lifted({}).renderSaveStatus(baseRead, baseDetail());
-  ok('the save reading no longer states the standing brief — the fold summary '
-    + 'below it carries that, from the same two fields',
-  !/Standing brief/.test(withBrief), withBrief.slice(-400));
-  ok('...and NO freshness mark is painted here at all now: an old brief is not '
-    + 'a stale one, and the save\'s own mark went with the reading it qualified',
-  (withBrief.match(/<span class="fresh-dot/g) || []).length === 0, withBrief.slice(0, 400));
-  const noBrief = lifted({}).renderSaveStatus({ ...baseRead, brief: { present: false } }, baseDetail());
-  ok('...and a missing brief is not stated here either, in either direction',
-    !/Standing brief/.test(noBrief), noBrief.slice(-300));
-
-  // THE READING SURVIVES A SCOPE SWITCH. loadScope drops state.detail before
-  // it paints, so without the index-row fallback the figure would blink out
-  // for the length of every fetch — and an instrument that disappears when you
-  // touch the control next to it is not one.
-  const midSwitch = lifted({ scope: 'main', machine: 'boxa' }).renderSaveStatus({
-    scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120,
-      harness: 'claude-code', lastSaveKind: 'complete', lastSaveNotes: [] }],
-    brief: { present: false },
-  }, null);
-  // THE INDEX-ROW FALLBACK SURVIVES, and what it has to carry is what is left
-  // of this function: the completeness verdict. A healthy mid-switch row paints
-  // nothing, which is correct — there is nothing to disclose — but a TRIMMED
-  // one must not vanish for the length of the fetch.
-  eq('a healthy mid-switch row paints nothing, because there is nothing to disclose',
-    midSwitch, '');
-  ok('...and the completeness verdict IS served from the index row, so a trim '
-    + 'cannot vanish mid-switch',
-  /cur-mon-loud cur-mon-danger/.test(lifted({ scope: 'main', machine: 'boxa' }).renderSaveStatus({
-    scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120, harness: 'claude-code',
-      lastSaveKind: 'trimmed', lastSaveNotes: ['nextSteps: 1 item(s) omitted over the state size budget'] }],
-    brief: { present: false },
-  }, null)));
-
-  // ABSENT IS NOT ZERO, at the site most likely to break it.
-  const nothing = lifted({}).renderSaveStatus(null, null);
-  eq('with nothing to report the strip renders nothing at all', nothing, '');
-  const noHandoff = lifted({}).renderSaveStatus({ scopes: [], brief: { present: false } }, null);
-  eq('a project with no handoff and nothing to warn about renders NOTHING here '
-    + '— the three-cell strip above answers "am I saved?" now, and an empty '
-    + 'notice slot is what lets the step\'s wrapper disappear with it',
-  noHandoff, '');
-
-  // ESCAPING. Scope names, machine ids and harness names all arrive from disk
-  // and can arrive over sync from another machine.
-  const XSS = '<img src=x onerror=alert(1)>';
-  const hostile = lifted({}).renderSaveStatus({
-    scopes: [{ scope: XSS, machine: XSS, writtenAgeSeconds: 10, harnessShared: true, harnesses: [XSS] }],
-    brief: { present: false },
-  }, { scope: 'main', machine: 'boxa',
-    current: { present: true, writtenAgeSeconds: 7200, writtenAt: new Date(Date.now() - 7200_000).toISOString(),
-      lastSaveKind: 'trimmed', lastSaveNotes: [XSS] },
-    journal: { entries: [{ harness: XSS }] } });
-  ok('no raw <img> survives from a scope, machine, harness or note',
-    !hostile.includes('<img'), hostile.slice(0, 400));
-  ok('...and the hostile text is still SHOWN, escaped, rather than dropped',
-    hostile.includes('&lt;img'), hostile.slice(0, 400));
-}
-
-// ═════════════════════════════════════════════════════════════════════════
-section('§8b — The strip TICKS: screenSignature can see the pane it paints');
-// The view's own window size, read off live source rather than retyped: a copy
-// here could agree with the assertions while the shipped table painted a
-// different number of rows.
-const WS_WINDOW_SRC = Number((/^const WS_WINDOW = (\d+);$/m.exec(viewSrc) || [])[1]);
-if (!Number.isFinite(WS_WINDOW_SRC)) throw new Error('WS_WINDOW not found in memory.js');
-// ═════════════════════════════════════════════════════════════════════════
-//
-// A poll re-renders only when the screen would look different, which is right
-// — an unconditional re-render closes a picker somebody has open. The failure
-// mode is the other side of it: a pane the signature cannot see is a pane that
-// silently stops updating. The strip is a CLOCK, so this is not cosmetic.
-{
-  // `workStreamOrder` joins the list because screenSignature's work-stream
-  // mark is taken over the ORDER THE TABLE PAINTS rather than over the
-  // response — the two clocks disagree on every synced machine, and a mark
-  // describing an arrangement that is not on screen is the exact shape of
-  // bug this section exists to catch.
-  // `wsShownCount` joins them in v3.56.0: the table shows the newest FIVE with a
-  // "Show N more" footer, so the mark is the rows ON SCREEN plus the NUMBER
-  // hidden behind it, and that split is this function's arithmetic. Lifted from
-  // live source with the rest rather than stubbed — a stub would let the mark
-  // describe a window the table is not painting, which is the same class of bug
-  // §8b was written for one release earlier.
-  const SIG = ['formatAge', 'effectiveSave', 'workStreamOrder', 'wsShownCount', 'newestPair',
-    'projectMetaLine', 'screenSignature'];
-  const sigOf = (st) => new Function('state', 'WS_WINDOW',
-    SIG.map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
-    + '\nreturn screenSignature();')(st, WS_WINDOW_SRC);
-
-  const st = (over = {}) => ({
-    activeProject: 'proj', staleWrite: false, indexError: null,
-    scope: 'main', machine: 'boxa', projects: [],
-    projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
-      brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() } },
-    detail: { scope: 'main', machine: 'boxa',
-      current: { present: true, writtenAgeSeconds: 120, lastSaveKind: 'complete' } },
-    ...over,
-  });
-
-  const base = sigOf(st());
-  ok('the reading ageing into the next band repaints (59 min -> 1 hr)',
-    sigOf(st({ detail: { scope: 'main', machine: 'boxa',
-      current: { present: true, writtenAgeSeconds: 3600, lastSaveKind: 'complete' } } })) !== base);
-  ok('a save going from complete to TRIMMED repaints, even at the same age',
-    sigOf(st({ detail: { scope: 'main', machine: 'boxa',
-      current: { present: true, writtenAgeSeconds: 120, lastSaveKind: 'trimmed' } } })) !== base);
-  ok('a NEWER SAVE IN ANOTHER SCOPE of this project repaints — the picker list is unchanged, '
-    + 'so nothing else in the signature could see it',
-    sigOf(st({ projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 7200 },
-      { scope: 'other', machine: 'boxa', writtenAgeSeconds: 60 }],
-    brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() } } })) !== base);
-  ok('a harness collision appearing repaints',
-    sigOf(st({ projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120,
-      harnessShared: true, harnesses: ['a', 'b'] }],
-    brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() } } })) !== base);
-  ok('the standing brief being edited repaints',
-    sigOf(st({ projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
-      brief: { present: true, updatedAt: new Date(Date.now() - 60_000).toISOString() } } })) !== base);
-
-  // ...and the other side, which is what stops this becoming a busy poll.
-  ok('CONTROL: an identical state produces an identical signature', sigOf(st()) === base);
-  // ── INVERTED IN v3.55.0, DELIBERATELY, AND THE REASON IS THE WHOLE POINT ──
-  //
-  // This used to assert the OPPOSITE: that a duplicated (scope, machine) pair
-  // must NOT move the signature. That was correct while the pane behind it was
-  // a DROPDOWN — two copies of `main` were one option, and reporting a
-  // duplicate as a change would have closed a picker somebody had open for no
-  // visible difference. It was the over-firing side of the guard, and the
-  // comment it carried said so.
-  //
-  // The pane is now a TABLE (renderWorkStreams), and in a table a duplicated
-  // pair is TWO ROWS — two ages, two headlines, two harnesses, each of which
-  // can move on its own. The signature must change exactly when the pixels
-  // would, so the same input that had to be invisible now has to be visible.
-  // Nothing about the rule changed; the thing it is measuring did.
-  //
-  // The under-firing side it was guarding against is covered by the control
-  // directly below (an age moving WITHIN one band still costs no render), which
-  // is the assertion that actually stops this becoming a busy poll.
-  ok('a DUPLICATED pair is TWO ROWS in the work-stream table, so it MUST read '
-    + 'as a change — the inverse of what a dropdown needed',
-    sigOf(st({ projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 },
-      { scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
-    brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() } } })) !== base);
-  // TWO ROWS CROSSING EACH OTHER IS A CHANGE ON SCREEN WITH NO CELL OF ITS OWN.
-  // 7200 s and 7800 s both read "2 hr ago", so this swap moves no word, no dot
-  // and no mtime — only which row is drawn first. A mark projected off
-  // `pr.scopes` instead of off the painted order cannot see it, and the table
-  // would keep a stale arrangement while every figure in it stayed correct.
-  // `main/boxa` stays strictly newest in both states so `newestPair`, which is
-  // folded in separately and reads the raw response, cannot be what moves.
-  {
-    const crossing = (x, y) => st({ projectRead: { scopes: [
-      { scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 },
-      { scope: 'x', machine: 'boxa', writtenAgeSeconds: x },
-      { scope: 'y', machine: 'boxa', writtenAgeSeconds: y },
-    ], brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() } } });
-    ok('two rows swapping AGENT clocks inside one age band repaints — the pane\'s '
-      + 'ORDER is part of what it paints',
-      sigOf(crossing(7200, 7800)) !== sigOf(crossing(7800, 7200)));
-  }
-  ok('CONTROL: an age moving WITHIN one band does not repaint (300s -> 320s both read "5 min ago")',
-    sigOf(st({ detail: { scope: 'main', machine: 'boxa',
-      current: { present: true, writtenAgeSeconds: 300, lastSaveKind: 'complete' } } }))
-    === sigOf(st({ detail: { scope: 'main', machine: 'boxa',
-      current: { present: true, writtenAgeSeconds: 320, lastSaveKind: 'complete' } } })));
-}
-
-// ═════════════════════════════════════════════════════════════════════════
-section('§9 — The store\'s own vocabulary, and nothing wrote outside the tempdir');
+section('§9 —The store\'s own vocabulary, and nothing wrote outside the tempdir');
 // ═════════════════════════════════════════════════════════════════════════
 //
 // classifySaveNotes reads TEXT, which is sound only because the store never

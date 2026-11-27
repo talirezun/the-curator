@@ -319,232 +319,33 @@ section('§5 — the maintainer’s exact reported shape, reproduced end to end'
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§6 — the memory.js copy: what it must say, and what it must never say');
+section('§6 — the Projects page\'s words: what it must say, and what it must never say');
 // ═════════════════════════════════════════════════════════════════════════
 //
-// Same technique test-memory-truth.js uses: extract the real functions out of
-// the shipped view source and execute them, so this is the actual rendered
-// HTML a browser would receive — not a hand-typed guess at it.
-function extractFunction(src, name, where) {
-  const marker = new RegExp(`(?:^|\\n)(?:export\\s+)?(?:async\\s+)?function ${name}\\s*\\(`);
-  const m = marker.exec(src);
-  if (!m) throw new Error(`extractFunction: "${name}" not found in ${where}`);
-  const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
-  let p = src.indexOf('(', start); let parenDepth = 0;
-  for (; p < src.length; p++) {
-    if (src[p] === '(') parenDepth++;
-    else if (src[p] === ')') { parenDepth--; if (parenDepth === 0) { p++; break; } }
-  }
-  let i = src.indexOf('{', p); let depth = 0;
-  for (; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
-  }
-  const out = src.slice(start, i).replace(/^export\s+/, '');
-  if (!/\n\}$/.test(out)) throw new Error(`extractFunction: "${name}" desynced in ${where}`);
-  return out;
-}
-
-const viewSrc = readFileSync(join(NEXT, 'views/memory.js'), 'utf8');
-const { renderReadout } = await import('../src/public/next/shared/text.js');
-// v3.65.0 (M1): the four hand-built `.mem-save-line` sentences became an
-// INSTRUMENT — `renderSaveStatus` composes its body and its warnings through
-// `renderMonitor` (shared/monitor.js) and cuts every mark on `freshnessTier`
-// (shared/age.js) rather than the view's own `freshnessStep`-only ladder.
-// Both take no imports of their own, so they are handed in as the REAL
-// shipped functions — not stubs — exactly like `renderReadout` above: a stub
-// would assert this suite's own guess at their shape, not memory.js's actual
-// dependency on them.
-const { renderMonitor } = await import('../src/public/next/shared/monitor.js');
-const { freshnessTier } = await import('../src/public/next/shared/age.js');
-const escapeHtml = new Function(extractFunction(
-  readFileSync(join(NEXT, 'app.js'), 'utf8'), 'escapeHtml', 'app.js') + '\nreturn escapeHtml;')();
-
-// `freshnessStep` MOVED to shared/age.js when the freshness scale became
-// app-wide, so it is lifted from THERE — see the same note in
-// test-memory-truth.js. This extractor matches a `function <name>(`
-// declaration, so neither the old path nor a one-line re-export in memory.js
-// would resolve; re-pointing is what keeps the suite executing the REAL
-// shipped function.
-// v3.55.0: renderSaveStatus grew the "Working on" headline (which reads
-// `freshnessStep` and `state.projects`) and the tray's newer-elsewhere reading
-// (`newerOnAnotherMachine`), so both travel with it. A lift list that is short
-// by one collaborator is a ReferenceError, not a failing assertion.
-// `saveLine` is DELETED (v3.65.0, M1) — its four sentences are `renderMonitor`
-// lines now, composed inline in `renderSaveStatus`, so there is no separate
-// function left to lift.
-const LIFT_VIEW = ['formatAge', 'effectiveSave', 'newestPair', 'harnessOf',
-  'newerOnAnotherMachine',
-  'firstNote', 'renderSaveStatus'];
-const LIFT_AGE = ['freshnessStep'];
-const LIFT = [...LIFT_VIEW, ...LIFT_AGE];
-const ageSrc = readFileSync(join(NEXT, 'shared/age.js'), 'utf8');
-function lifted(stateObj) {
-  const body = LIFT_VIEW.map((n) => extractFunction(viewSrc, n, 'memory.js'))
-    .concat(LIFT_AGE.map((n) => extractFunction(ageSrc, n, 'shared/age.js')))
-    .join('\n') +
-    '\nreturn { ' + LIFT.join(', ') + ' };';
-  return new Function(
-    'state', 'escapeHtml', 'icon', 'renderReadout', 'renderMonitor', 'freshnessTier', body)(
-    stateObj, escapeHtml, (n) => '<svg data-icon="' + n + '"></svg>',
-    renderReadout, renderMonitor, freshnessTier);
-}
-
-const baseRead = {
-  scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
-  brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() },
-};
-const baseDetail = (over = {}) => {
-  const { current, ...rest } = over;
-  return {
-    scope: 'main', machine: 'boxa',
-    journal: { entries: [{ at: '2026-08-30T10:00:00.000Z', harness: 'claude-code', model: 'opus-5' }] },
-    ...rest,
-    current: {
-      present: true, writtenAgeSeconds: 120,
-      writtenAt: new Date(Date.now() - 120_000).toISOString(),
-      savedAt: new Date(Date.now() - 120_000).toISOString(),
-      arrivedAt: new Date(Date.now() - 120_000).toISOString(),
-      lastSaveKind: 'complete', lastSaveNotes: [], ...current,
-    },
-  };
-};
-
-const clippedHtml = lifted({}).renderSaveStatus(baseRead, baseDetail({
-  current: { lastSaveKind: 'clipped', lastSaveNotes: ['headline: truncated to 200 chars (was 244)'] },
-}));
-const trimmedHtml = lifted({}).renderSaveStatus(baseRead, baseDetail({
-  current: { lastSaveKind: 'trimmed', lastSaveNotes: ['nextSteps: 2 item(s) omitted over the state size budget'] },
-}));
-
-// v3.65.1 (D2): the BADGES went with the reading they sat on. "Last saved"
-// said what the MEMORY overview tile and the Handoffs row's summary already
-// say, in a second shape, so the row is deleted — and a badge on a reading
-// that is not on screen has nothing to qualify. What the four kinds are told
-// apart by is unchanged and is what this section has always really tested: a
-// CLIPPED save is a monitor LINE (a disclosure you read), a TRIMMED one is a
-// `loud` entry in the danger tone (a warning, never behind a chevron), a
-// REPLACED one is a `loud` entry in the default tone, and a COMPLETE one
-// renders NOTHING AT ALL — `renderSaveStatus` returns '' when there is no
-// disclosure and no warning, which is what puts step ②'s four rows at the top
-// of the step on an ordinary project.
-// v3.65.1: every ordinary LINE left this function with the unfolded block it
-// stood in — those were explanations, and a step body is fold rows with the
-// explanation in the ⓘ. A clipped save is not an explanation: it is an OUTCOME
-// about a specific save, the sibling of `trimmed`, and it fires only when a
-// save was actually clipped. So it stays on screen, unfolded, as a `loud`
-// entry — and what separates it from `trimmed` is the TONE, not the kind.
-ok('a CLIPPED save is a loud entry in the QUIET tone — a note, not an alarm',
-  /cur-mon-loud cur-mon-quiet/.test(clippedHtml) && !/incomplete/.test(clippedHtml),
-  clippedHtml.slice(0, 700));
-ok('...and it is NOT given the danger treatment',
-  !/cur-mon-danger/.test(clippedHtml) && !/mem-badge-attn/.test(clippedHtml), clippedHtml);
-ok('the clipped copy does not claim the state budget was hit',
-  !/state budget/i.test(clippedHtml), clippedHtml);
-ok('the clipped copy does not say the handoff is missing anything',
-  !/\bmissing\b/i.test(clippedHtml), clippedHtml);
-ok('the clipped copy does not tell the user to save again',
-  !/save (it |that content )?again/i.test(clippedHtml), clippedHtml);
-// ── v3.65.2 (C3): THE CLIPPED SAVE IS A REPORT ────────────────────────────
-// The maintainer, on the v3.65.1 note: "I don't understand what this is. It
-// is not wide enough … it should be in a format and have visuals." The same
-// monitor, restructured: a head that says the outcome, one LINE per note
-// (never only the first), the app's three channels — the freshness dot on
-// `saved`, a depth bar on the clipped field against its own limit, and the
-// quiet loud entry. The plain-language paragraph moved to step ②'s ⓘ.
-ok('the clipped report says the handoff was saved in full — the head word, in the ok tone',
-  /cur-mon-state cur-mon-ok"><span class="cur-mon-state-dot" aria-hidden="true"><\/span>Handoff saved in full</.test(clippedHtml),
-  clippedHtml);
-ok('...and the reassurance is a quiet loud line naming what WAS shortened',
-  /cur-mon-loud cur-mon-quiet" role="status">Nothing was lost — only the one-line summary was shortened\.</.test(clippedHtml),
-  clippedHtml);
-ok('...and it says, in its own last line, when it clears',
-  /cur-mon-note">Clears on the next save to this handoff whose summary fits\.</.test(clippedHtml), clippedHtml);
-ok('the store’s note is READ, not quoted: 244 against the 200-character limit, as a depth bar that is danger because it is over',
-  /<span class="cur-mon-key">headline<\/span><span class="cur-mon-value"><span class="cur-depth"><span class="cur-depth-bar cur-depth-danger" style="width:100%"[^>]*><\/span><span class="cur-depth-value">244 of 200 characters</.test(clippedHtml),
-  clippedHtml);
-ok('...and the same fact is also in words, unfolded (rule 6)',
-  /cur-mon-sub">shortened to 200 — the last 44 characters were cut</.test(clippedHtml), clippedHtml);
-ok('TIME rides the freshness dot on the `saved` line, cut on the shared tier',
-  /<span class="cur-mon-key">saved<\/span><span class="cur-mon-value"><span class="fresh-dot fresh-[a-z]+" aria-hidden="true"><\/span>2 min ago</.test(clippedHtml),
-  clippedHtml);
-ok('...the explanation paragraph is NOT in the report any more (it is the ⓘ’s)',
-  !/future session/i.test(clippedHtml), clippedHtml);
-// v3.71.0: step ②'s ⓘ is the `context.memory` explainer (a key, not prose),
-// and the 200-character summary paragraph moved to the guide's Memory section,
-// which that explainer's card opens (COPY.md C4, "moved, not deleted").
-ok('...and it IS behind step ②’s ⓘ: the Memory explainer, whose guide section states the cap',
-  /infoKey: 'context\.memory'/.test(viewSrc)
-  && /summary is capped at 200 characters/.test(readFileSync(join(ROOT, 'docs/user-guide.md'), 'utf8')));
+// PHASE 2 (2026-11-27). The five-step page's `renderSaveStatus` (a monitor of
+// loud lines) is gone with that page; the Now tab says the same verdicts as
+// kit notices composed by views/projects/model.js `nowNotices` — imported
+// here, the REAL code, in plain Node. The rule is unchanged: a CLIPPED save
+// never claims loss; a TRIMMED one always does; a REPLACED one says what was
+// replaced. (The old §6 pinned the monitor's markup; those pins went with it.)
 {
-  // EVERY NOTE IS A LINE — the v3.65.1 note showed only the first, and two
-  // real clipped pairs carried a second, non-loss note that was invisible.
-  const two = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { lastSaveKind: 'clipped', lastSaveNotes: [
-      'headline: truncated to 200 chars (was 245)',
-      "traps: defanged a URL scheme & a pipe (\"it's safe\")",
-    ] },
-  }));
-  const keys = [...two.matchAll(/<span class="cur-mon-key">([^<]+)<\/span>/g)].map((m) => m[1]);
-  ok('two notes make two lines — the second note is not dropped',
-    keys.includes('headline') && keys.includes('traps'), keys.join(','));
-  ok('...a non-truncation note reads "adjusted — wording unchanged" with the note’s own words beside it',
-    /<span class="cur-mon-key">traps<\/span><span class="cur-mon-value">adjusted — wording unchanged<\/span><span class="cur-mon-sub">defanged a URL scheme &amp; a pipe \(&quot;it&#39;s safe&quot;\)</.test(two),
-    two);
-  ok('...and a note is escaped ONCE — no `&amp;amp;`, the old double-escape through firstNote',
-    !/&amp;amp;|&amp;#39;/.test(two), two);
-  const three = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { lastSaveKind: 'clipped', lastSaveNotes: [
-      'traps: defanged a pipe', 'model: truncated to 64 chars (was 70)', 'headline: truncated to 200 chars (was 201)',
-    ] },
-  }));
-  eq('three notes make three lines, in the store\'s order — whatever order they come in',
-    [...three.matchAll(/<span class="cur-mon-key">([^<]+)<\/span>/g)].map((m) => m[1]).join(','),
-    'saved,handoff,traps,model name,headline');
-  const amp = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { lastSaveKind: 'trimmed', lastSaveNotes: ["nextSteps: R&D item's text omitted"] },
-  }));
-  ok('a TRIMMED save\'s note is escaped exactly ONCE — firstNote no longer escapes before the monitor does',
-    /R&amp;D item&#39;s text omitted/.test(amp) && !/&amp;amp;|&amp;#39;/.test(amp), amp);
-  const odd = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { lastSaveKind: 'clipped', lastSaveNotes: ['something the grammar does not know'] },
-  }));
-  ok('an unparseable note is kept VERBATIM as a line, never dropped',
-    /<span class="cur-mon-key">note<\/span><span class="cur-mon-value">something the grammar does not know</.test(odd), odd);
-  const label = lifted({}).renderSaveStatus(baseRead, baseDetail({
-    current: { lastSaveKind: 'clipped', lastSaveNotes: ['harness: truncated to 64 chars (was 80)'] },
-  }));
-  ok('a clipped TOOL NAME is named in words and does not claim the summary was cut',
-    /cur-mon-key">tool name</.test(label) && /only a label on the handoff was shortened/.test(label)
-    && !/one-line summary/.test(label), label);
+  const MODEL = await import('../src/public/next/views/projects/model.js');
+  const say = (kind, note) => MODEL.nowNotices({ lastSaveKind: kind, lastSaveNote: note || '' })
+    .map((n) => n.title + ' ' + (n.line || '')).join(' | ');
+  const clipped = say('clipped', 'headline: truncated to 200 chars (was 244)');
+  ok('a CLIPPED save says nothing in the handoff was lost', /Nothing in the handoff was lost/.test(clipped), clipped);
+  ok('...and NEVER claims loss ("did not survive", "incomplete", "missing", "dropped")',
+    !/did not survive|incomplete|missing|dropped/i.test(clipped), clipped);
+  ok('...and keeps the store\'s own note, so the owner can read what was shortened', clipped.includes('truncated to 200 chars'), clipped);
+  const trimmed = say('trimmed', 'nowState: trimmed 2,000 chars');
+  ok('a TRIMMED save says part of it did not survive', /did not survive the save/.test(trimmed), trimmed);
+  ok('...and is an ERROR notice (role=alert), never an info line',
+    MODEL.nowNotices({ lastSaveKind: 'trimmed' })[0].tone === 'error');
+  const replaced = say('replaced');
+  ok('a REPLACED save says it replaced a larger handoff, and nothing sent was lost',
+    /replaced a larger handoff/.test(replaced) && /Nothing the agent sent was lost/.test(replaced), replaced);
+  ok('CONTROL: a complete save says nothing at all', MODEL.nowNotices({ lastSaveKind: 'complete' }).length === 0);
 }
-
-ok('a TRIMMED save keeps the loud, danger treatment — unchanged',
-  /cur-mon-loud cur-mon-danger/.test(trimmedHtml) && !/cur-mon-line\b/.test(trimmedHtml),
-  trimmedHtml.slice(0, 700));
-ok('...and the two tones really are different, so the four kinds stay legible',
-  /cur-mon-quiet/.test(clippedHtml) && !/cur-mon-quiet/.test(trimmedHtml),
-  clippedHtml.slice(0, 200) + ' || ' + trimmedHtml.slice(0, 200));
-ok('...and a COMPLETE save renders NOTHING — no instrument, no empty card',
-  lifted({}).renderSaveStatus(baseRead, baseDetail()) === '',
-  JSON.stringify(lifted({}).renderSaveStatus(baseRead, baseDetail())));
-ok('the corrected trimmed copy no longer claims the state budget was hit as the cause',
-  !/did not fit the state budget/i.test(trimmedHtml), trimmedHtml);
-ok('CONTROL: that exact check can fail — the OLD sentence would have tripped it',
-  /did not fit the state budget/i.test('That save did not fit the state budget, so part of it was trimmed.'));
-ok('the trimmed copy still says something is missing — that part stays true for real body loss',
-  /missing/i.test(trimmedHtml), trimmedHtml);
-ok('CONTROL: a healthy (complete) save says neither "incomplete" nor "shortened"',
-  !/incomplete/.test(lifted({}).renderSaveStatus(baseRead, baseDetail())) &&
-  !/summary shortened/.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
-
-// A REPLACED save must remain untouched by any of this.
-const replacedHtml = lifted({}).renderSaveStatus(baseRead, baseDetail({
-  current: { lastSaveKind: 'replaced', lastSaveNotes: ['replace: deliberately overwrote a larger handoff (9000 → 400 body bytes)'] },
-}));
-ok('CONTROL: a REPLACED save is unaffected by this change — no clipped/incomplete wording',
-  !/incomplete/.test(replacedHtml) && !/summary shortened/.test(replacedHtml) &&
-  replacedHtml.includes('replaced a larger handoff'), replacedHtml.slice(0, 700));
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§7 — consumers: pass-through sites must not need a switch to be safe');

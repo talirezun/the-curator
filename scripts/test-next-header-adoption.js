@@ -345,7 +345,7 @@ section('§4  THE TWO NEW ADOPTIONS, AT NAMED SITES');
   // move happened rather than merely gained a second call site: no
   // `variant: 'sidebar'` survives in this file at all.
   ok('memory.js sidebar: the component, in the sidebar density',
-    /renderSidebarHead\(\{\s*title: 'Project context',/.test(m)
+    /renderSidebarHead\(\{\s*title: 'Projects',/.test(m)
       && !/variant: 'sidebar'/.test(m));
   // INVERTED DELIBERATELY, and the assertion it replaces was right when it was
   // written. It pinned "eyebrow + title, NO info", because at the time a second
@@ -361,12 +361,19 @@ section('§4  THE TWO NEW ADOPTIONS, AT NAMED SITES');
   // because the `info` clause is mandatory in the pattern, not optional (the
   // same treatment sync.js's centre header got in v3.24.0, three assertions
   // below, for the same reason).
-  ok('memory.js centre: the component, eyebrow + title + info (the mechanism, moved behind the mark)',
-    // v3.71.0: the info is the `context.page` explainer, marked "you are here".
-    /renderViewHeader\(\{\s*eyebrow: '[^']*',\s*title: 'Project context',\s*info: explainerHtml\('context\.page', \{ here: 'agent-memory' \}\)/.test(m),
-    'the centre header no longer carries an info field');
-  ok('memory.js centre: ...as raw HTML, which is what lets the panel carry its list and its docs link',
-    /infoHtml: true/.test(m));
+  // PHASE 2 (2026-11-27): the centre is the kit's OBJECT PAGE now
+  // (views/projects/page.js renderProjectsPage → shared/object-page.js) —
+  // the project's own name, one status sentence, the tabs. The property is
+  // unchanged: the page explains itself behind ONE mark, the `context.page`
+  // explainer marked "you are here", rendered as HTML by the explainer kit.
+  {
+    const pg = readFileSync(join(HERE, '..', 'src', 'public', 'next', 'views', 'projects', 'page.js'), 'utf8');
+    ok('memory.js centre: the object page, with the page explainer behind its one mark',
+      /objectPage\(\{/.test(pg) && /explainerMark\('prj-page-info', 'context\.page', \{ here: 'agent-memory' \}\)/.test(pg)
+        && /renderProjectsPageHtml\(\{/.test(m),
+      'the centre is not the object page with its context.page mark');
+    ok('memory.js centre: ...and no second page header is drawn over it', !/renderViewHeader\(\{/.test(m));
+  }
   ok('memory.js: the explainer component is GONE from this view — not imported, not called',
     !/renderExplainer/.test(m) && !/summary: 'How this works'/.test(m));
   ok('sync.js sidebar: the component, in the sidebar density',
@@ -416,7 +423,7 @@ section('§5  WHAT WAS CUT HAS NOT RETURNED, IN EITHER SHAPE');
   // v3.71.0: the split is the `context.page` explainer's two points, which
   // the MAIN header is handed (asserted above) — still behind a real control.
   ok('memory.js: ...and the header\u2019s ⓘ is where that fact lives now',
-    /info: explainerHtml\('context\.page'/.test(m)
+    /'context\.page'/.test(readFileSync(join(HERE, '..', 'src', 'public', 'next', 'views', 'projects', 'page.js'), 'utf8'))
     && /You write \*\*the brief\*\*[\s\S]*Your agents save \*\*Handoffs\*\*/.test(
       readFileSync(join(SHARED_DIR, 'explainers.js'), 'utf8')));
   ok('memory.js: ...and the floating foot card it replaces is gone',
@@ -500,8 +507,10 @@ const TITLE_ALLOW = {
     (() => { const s = '<button type="button" title="ok">v</button>';
       const i = s.indexOf('title="'); return FOCUSABLE.test(s.slice(s.lastIndexOf('<', i), i)); })());
   // The two that were PROMOTED rather than folded — named, so a revert is red.
+  // PHASE 2: the mirror explanation is a kit notice on the Now tab, composed
+  // in views/projects/model.js nowNotices — still a rendered note, never a tooltip.
   ok('memory.js: the shared-mirror explanation is a rendered note, not a tooltip',
-    /A read-only Shared Brain mirror/.test(SRC['memory.js'])
+    /read-only Shared Brain mirror/.test(readFileSync(join(HERE, '..', 'src', 'public', 'next', 'views', 'projects', 'model.js'), 'utf8'))
     && !/title="A read-only Shared Brain mirror/.test(RAW['memory.js']));
   // v3.71.0: the caution left step ②'s ⓘ for the guide's Memory section (the
   // Memory explainer's card opens it); the page names the machine per row. It
