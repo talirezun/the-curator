@@ -59,7 +59,7 @@ export function deletionCardHtml(d, opts = {}) {
   const off = busy || opts.disabled ? ' disabled' : '';
   return (
     '<div class="sync-decision sync-decision-danger" id="sync-deletion-card" role="alert" data-never-pro>' +
-      '<div class="sync-decision-title">' +
+      '<div class="sync-decision-title" id="sync-deletion-title" tabindex="-1">' +
         (d.direction === 'in' ? 'Check before deleting on this computer' : 'Check before deleting from your GitHub backup') +
       '</div>' +
       '<p class="sync-decision-body" id="sync-deletion-headline">' + esc(deletionHeadline(d)) +

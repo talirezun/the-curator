@@ -41,7 +41,7 @@ import { toUserError } from '../brain/user-errors.js';
 import { pickFolderWin32 } from '../brain/win-folder-dialog.js';
 import { pickFolderLinux, LINUX_NO_DIALOG_MESSAGE } from '../brain/linux-folder-dialog.js';
 import { validateKnowledgeFolderPath } from '../brain/knowledge-folder-path.js';
-import { isConfigured as isSyncConnected, isRecordedSyncFolder, syncFolderIsElsewhere } from '../brain/sync.js';
+import { isConfigured as isSyncConnected, isTrackedSyncFolder, syncFolderIsElsewhere, syncFolderUnrecorded } from '../brain/sync.js';
 // NAMESPACE import, the same degradation contract as `llmModule` above: a
 // not-yet-shipped export resolves to undefined and the route reports it, rather
 // than failing this file's load and taking every config endpoint down.
@@ -840,7 +840,15 @@ const SYNC_ELSEWHERE_FOLDER_MESSAGE =
   'Sync is connected to the knowledge folder you had before, so while it is connected the folder can ' +
   'only be set back to that one. Nothing was changed. To use another folder, open Sync and choose ' +
   'Disconnect, change the folder, then connect Sync again.';
-const syncConnectedMessage = () => (syncFolderIsElsewhere() ? SYNC_ELSEWHERE_FOLDER_MESSAGE : SYNC_CONNECTED_FOLDER_MESSAGE);
+// No record yet (an install that has not synced since v4.1.2; v4.2.1 audit
+// M2): which folder Sync backs up is not known, so neither sentence above is.
+const SYNC_UNRECORDED_FOLDER_MESSAGE =
+  'Sync is connected, and it has not yet recorded which knowledge folder it backs up on this computer, ' +
+  'so while it is connected the folder can only be set to one that holds every file Sync backs up. ' +
+  'Nothing was changed. To use another folder, open Sync and choose Disconnect, change the folder, ' +
+  'then connect Sync again.';
+const syncConnectedMessage = () => (syncFolderUnrecorded() ? SYNC_UNRECORDED_FOLDER_MESSAGE
+  : syncFolderIsElsewhere() ? SYNC_ELSEWHERE_FOLDER_MESSAGE : SYNC_CONNECTED_FOLDER_MESSAGE);
 
 function folderRefusalError(status, body) {
   const err = new Error(body.error);
@@ -862,7 +870,7 @@ function sameFolderPath(a, b) {
 function syncConnectedRefusal(next) {
   if (!isSyncConnected()) return null;
   if (typeof next === 'string' && next && sameFolderPath(next, getDomainsDir())) return null;
-  if (isRecordedSyncFolder(next)) return null;
+  if (isTrackedSyncFolder(next)) return null;
   return { ok: false, reason: 'sync-connected', error: syncConnectedMessage() };
 }
 
@@ -883,7 +891,7 @@ function setDomainsDir(next) {
  */
 export function refuseFolderChangeWhileSyncConnected(_req, res, next) {
   if (isSyncConnected() && !syncFolderIsElsewhere()) {
-    return res.status(400).json({ ok: false, reason: 'sync-connected', error: SYNC_CONNECTED_FOLDER_MESSAGE });
+    return res.status(400).json({ ok: false, reason: 'sync-connected', error: syncConnectedMessage() });
   }
   next();
 }

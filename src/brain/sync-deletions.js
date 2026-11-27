@@ -62,10 +62,14 @@ export function isWikiPagePath(p) {
 const topOf = (p) => (p.includes('/') ? p.slice(0, p.indexOf('/')) : '');
 const isDomainTop = (t) => t !== '' && !t.startsWith('.');
 
-/** The tokens a request carries: a string or an array, only well-formed ones, at most 8. */
+/**
+ * The tokens a request carries: a string or an array, only well-formed ones,
+ * the LAST 8 (audit m7: the page appends each new answer to the ones already
+ * sent, so the newest is at the end and must never be the one dropped).
+ */
 export function confirmedTokens(v) {
   const list = Array.isArray(v) ? v : (typeof v === 'string' ? [v] : []);
-  return [...new Set(list.filter((t) => typeof t === 'string' && TOKEN_RE.test(t)))].slice(0, MAX_TOKENS);
+  return [...new Set(list.filter((t) => typeof t === 'string' && TOKEN_RE.test(t)))].slice(-MAX_TOKENS);
 }
 
 export function deletionToken(direction, entries) {

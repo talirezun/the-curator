@@ -22,7 +22,7 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 | sync-git-missing | Git, which Sync uses, is not installed or not found. The Windows app carries its own copy of git, so there this means the app’s install is damaged. | On a Mac, run `xcode-select --install` in Terminal, then try again. In the Windows app, run the latest Windows installer again (your notes and settings are kept). In the Windows browser install, install Git for Windows or run the one-line installer again, then restart The Curator. |
 | sync-index-locked | A sync that stopped part-way left git’s lock file behind. Nothing was changed. | If no other sync is running, delete index.lock in the hidden .knowledge-git folder in The Curator’s data folder, then sync again. |
 | sync-deletions-need-confirm | This sync would delete over 5 files, a whole domain or over 10% from GitHub. Nothing was changed. | On the Sync page: Show the pages, then Cancel or Delete them. |
-| sync-pull-deletions-need-confirm | A pull would delete as many here (removed elsewhere). Nothing was changed. | Same card: Cancel keeps them. |
+| sync-pull-deletions-need-confirm | A pull would delete that many pages here. Nothing was changed. | Cancel keeps them. To re-send: Disconnect, connect with Merge. |
 | sync-failed | Sync stopped for a reason The Curator does not recognise. Part of the run (for example changes already pulled) may have finished. | Try again in a minute. If it repeats, send the Technical detail line to support. |
 | git-other | A git step The Curator runs failed in a way it does not recognise. | Try again. If it fails the same way, send the Technical detail line to support. |
 

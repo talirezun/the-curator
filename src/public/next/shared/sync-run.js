@@ -63,6 +63,20 @@ export function createSyncRunner(env) {
   // finished job is adopted as a question once, never again after it was
   // answered (or cancelled).
   const askedJobs = new Set();
+  // Confirm tokens of questions this page already answered (Cancel, or Delete
+  // them), with when. A question the page's OWN run received never enters
+  // askedJobs (it has no job id here), so without this the next visit adopted
+  // the same server job and showed the card once more (audit m3). A job that
+  // finished AFTER the answer is a new attempt (the Context page's Sync
+  // button pressed later) and is still brought here. Server and page share
+  // one clock: the server listens on this computer only.
+  const answeredTokens = new Map();
+  const answeredBefore = (last) => {
+    const at = answeredTokens.get(last.details.confirmToken);
+    if (at === undefined) return false;
+    const fin = Date.parse(last.finishedAt);
+    return !(fin > at);
+  };
 
   function notify() {
     for (const fn of Array.from(listeners)) {
@@ -147,6 +161,7 @@ export function createSyncRunner(env) {
       // is byte-for-byte the request it always was.
       const confirmed = opts && Array.isArray(opts.confirmDeletions)
         ? opts.confirmDeletions.filter((t) => typeof t === 'string' && t) : [];
+      for (const t of confirmed) answeredTokens.set(t, Date.now());
       let next;
       try {
         const res = confirmed.length
@@ -191,6 +206,7 @@ export function createSyncRunner(env) {
         const last = payload && payload.last;
         if (last && last.state === 'failed' && SYNC_RUN_KINDS.includes(last.kind) && isSyncDeletionCode(last.code)
             && last.details && last.id != null && !askedJobs.has(last.id)
+            && !answeredBefore(last)
             && !(outcome && outcome.details && outcome.details.confirmToken === last.details.confirmToken)) {
           outcome = failedFromJob(last);
           notify();
@@ -205,7 +221,11 @@ export function createSyncRunner(env) {
     // The person answered the question (Cancel): it is not asked again from
     // this outcome. The next sync re-counts and asks again if it still applies.
     dismissDeletionQuestion(o) {
-      if (o && o === outcome && o.details) { outcome = { ...o, details: null, seen: true, dismissed: true }; notify(); }
+      if (o && o === outcome && o.details) {
+        if (typeof o.details.confirmToken === 'string') answeredTokens.set(o.details.confirmToken, Date.now());
+        outcome = { ...o, details: null, seen: true, dismissed: true };
+        notify();
+      }
     },
   };
 }

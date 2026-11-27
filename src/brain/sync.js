@@ -1911,12 +1911,24 @@ const folderMovedMessage = (recordedReal) =>
   `knowledge folder back to it, or set it to that folder in Settings: ${recordedReal}. To sync this folder ` +
   'instead, open Sync, choose Disconnect, then connect again: connecting shows what it would change before ' +
   'it changes anything.';
+// The recorded real path is no longer a folder of its own: it is gone, or a
+// link stands at it (a cloud provider that moved its folder, a home moved to
+// another disk; v4.2.1 audit m1). "Set it to that folder" cannot be followed
+// then (the path leads to the current folder), and the current folder may be
+// the same knowledge, so the sentence says neither.
+const folderGoneMessage = (recordedReal) =>
+  'Your knowledge folder now leads to a different folder on disk than the one Sync backs up on this ' +
+  `computer (${recordedReal}), and that folder is no longer there: it was moved or removed, or a link now ` +
+  'stands in its place. So Sync stopped before sending or receiving anything. Nothing was changed. If the ' +
+  'folder is on a drive or in a cloud folder that is not available right now, make it available and sync ' +
+  'again. If you moved it yourself, open Sync, choose Disconnect, then connect again: connecting shows what ' +
+  'it would change before it changes anything.';
 const FOLDER_CHANGED_LEGACY_MESSAGE =
   'Your knowledge folder holds none of the domains Sync backs up on this computer, so Sync stopped ' +
   'before sending or receiving anything. Syncing now would remove those domains from GitHub. ' +
-  'Nothing was changed. To sync this folder, or to go back to the one you had, open Sync, choose ' +
-  'Disconnect, set the knowledge folder in Settings, then connect again: connecting shows what it ' +
-  'would change before it changes anything.';
+  'Nothing was changed. To go back to the folder you had, set the knowledge folder back to it in ' +
+  'Settings (it must still hold every file Sync backs up). To sync this folder instead, open Sync, ' +
+  'choose Disconnect, then connect again: connecting shows what it would change before it changes anything.';
 
 /**
  * A folder path in one comparable spelling. Only what the OS itself treats as
@@ -2007,11 +2019,59 @@ export function isRecordedSyncFolder(p) {
 export function syncFolderIsElsewhere() {
   if (!isConfigured()) return false;
   const rec = readRecordedFolderSync();
-  if (rec === null) return false;
+  if (rec === null) {
+    // Legacy (audit M2): elsewhere when the current folder lacks a file Sync
+    // backs up, so the picker opens and a folder holding them all is accepted.
+    const files = legacyTrackedFilesSync();
+    return !!files && !holdsEvery(getDomainsDir(), files);
+  }
   const real = readRecordedFolderSync(WORK_TREE_REAL_KEY);
   const curReal = real !== null ? realFolderOf(getDomainsDir()) : null;
   if (curReal !== null) return curReal !== comparableRecordedReal(real);
   return comparableFolder(rec) !== comparableFolder(getDomainsDir());
+}
+
+/**
+ * The legacy case (no record: an install that has not synced since v4.1.2),
+ * for the folder routes (v4.2.1 audit M2). Every tracked file, read from the
+ * index, or null when there is no record to defer to, nothing tracked, or
+ * the list cannot be read. Hygiene files and the folder's own .gitignore are
+ * left out: the app rewrites and removes those itself.
+ */
+function legacyTrackedFilesSync() {
+  if (!isConfigured() || readRecordedFolderSync() !== null) return null;
+  try {
+    const out = execFileSync('git', [
+      ...GIT_CONFIG_ARGS, `--git-dir=${currentGitDir()}`, 'ls-files', '-z',
+    ], { cwd: ROOT, env: GIT_ENV, timeout: 20000, windowsHide: true, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] });
+    const files = zSplit(out).filter((f) => f !== '.gitignore' && !isHygieneJunkPath(f));
+    return files.length ? files : null;
+  } catch { return null; }
+}
+const holdsEvery = (dir, files) => files.every((f) => existsSync(path.join(dir, f)));
+
+/**
+ * For src/routes/config.js: may the knowledge folder be set to `p` while Sync
+ * is connected? Yes for the recorded folder; with no record (legacy), yes for
+ * a folder that holds every file Sync backs up, so the way back after a
+ * legacy refusal is open (audit M2). The deletion guard still checks the next
+ * sync.
+ */
+export function isTrackedSyncFolder(p) {
+  if (isRecordedSyncFolder(p)) return true;
+  if (typeof p !== 'string' || !p) return false;
+  const files = legacyTrackedFilesSync();
+  return !!files && holdsEvery(p, files);
+}
+
+/**
+ * For src/routes/config.js: true when Sync is connected with NO record (the
+ * legacy case). The route then says so in its own sentence, because neither
+ * "connected to your current folder" nor "the folder you had before" is
+ * known to be true.
+ */
+export function syncFolderUnrecorded() {
+  return isConfigured() && readRecordedFolderSync() === null && legacyTrackedFilesSync() !== null;
 }
 
 /** Throws the 'folder-changed' refusal when the folder is not the synced one. */
@@ -2028,8 +2088,11 @@ async function assertSyncedFolderUnchanged(opts = {}) {
     // The setting names another folder: say which one to set back. The same
     // setting now leading somewhere else: say that the folder moved.
     if (!samePath) throw refusal('folder-changed', folderChangedMessage(recorded), { field: 'domainsPath', syncedFolder: recorded });
-    throw refusal('folder-changed', folderMovedMessage(recordedReal),
-      { field: 'domainsPath', syncedFolder: recordedReal, realPathChanged: true });
+    // Is the recorded real path still a folder of its own (its real path is
+    // itself)? Only then can the person be told to set the folder to it.
+    const stillThere = realFolderOf(recordedReal) === comparableRecordedReal(recordedReal);
+    throw refusal('folder-changed', stillThere ? folderMovedMessage(recordedReal) : folderGoneMessage(recordedReal),
+      { field: 'domainsPath', syncedFolder: recordedReal, realPathChanged: true, ...(stillThere ? {} : { syncedFolderGone: true }) });
   }
   // A failure to list is a failure, never "nothing tracked" (it would let
   // the sync through and record whatever folder is current).
@@ -2037,15 +2100,19 @@ async function assertSyncedFolderUnchanged(opts = {}) {
   const tops = new Set(tracked.map((p) => p.split('/')[0]).filter((n) => n && n !== '.gitignore'));
   if (!tops.size) return;
   if ([...tops].some((t) => existsSync(path.join(current, t)))) {
-    // The folder it tracks: recorded now, so the exact check applies from here on.
-    await git(['config', WORK_TREE_KEY, current], opts).catch(() => {});
+    // Plausibly the folder it tracks. NOT recorded here (v4.2.1 audit M2):
+    // the deletion guard may still refuse this run, and a refusal changes
+    // nothing, the record included. recordSyncSuccess() records it once a
+    // sync has gone through; until then this legacy check stands.
     return;
   }
   throw refusal('folder-changed', FOLDER_CHANGED_LEGACY_MESSAGE, { field: 'domainsPath' });
 }
 
-async function recordSyncSuccess(gitDir) {
-  const at = new Date().toISOString();
+// The folder this sync went through with: the path and, beside it, the real
+// path. Written only once a sync got past the folder check AND the deletion
+// guard (audit M2: never by the check itself).
+async function recordSyncFolder(gitDir) {
   try {
     await git(['config', WORK_TREE_KEY, getDomainsDir()], gitDir ? { gitDir } : {});
   } catch { /* the legacy check above still stands for a repo with no record */ }
@@ -2055,6 +2122,13 @@ async function recordSyncSuccess(gitDir) {
     const real = realpathSync.native(path.resolve(getDomainsDir()));
     await git(['config', WORK_TREE_REAL_KEY, real], gitDir ? { gitDir } : {});
   } catch { /* the path record still stands */ }
+  // git rewrites the config file (it holds the remote's credential): 0600.
+  await chmod(path.join(gitDir || currentGitDir(), 'config'), 0o600).catch(() => {});
+}
+
+async function recordSyncSuccess(gitDir) {
+  const at = new Date().toISOString();
+  await recordSyncFolder(gitDir);
   try {
     await git(['config', LAST_SYNC_KEY, String(at)], gitDir ? { gitDir } : {});
     await chmod(path.join(gitDir || currentGitDir(), 'config'), 0o600).catch(() => {});
@@ -2925,6 +2999,59 @@ async function commitOrNull(ref) {
   return r.code === 1 ? null : (r.stdout.trim() || null);
 }
 
+// THE REMOTE'S `main`, AS THE GUARD ASSESSES IT (v4.2.1 audit M1). Read from
+// FETCH_HEAD, which every explicit `git fetch origin main` writes, and NEVER
+// from `refs/remotes/origin/main`: git maintains that ref only when `origin`
+// has a fetch refspec mapping `main`. A git folder made or edited by hand (or
+// brought from another tool) may have none, and then the ref is missing (Push
+// only assessed against nothing and deleted with no question) or stale (Pull
+// merged the old commit, said it worked, and every Sync failed after). The
+// first fetch still updates the ref where a refspec maps it (the badge and
+// the counts read it); the second (`--refmap=`) writes FETCH_HEAD only, so a
+// ref race with another process cannot stop it. Every fetch in this module is
+// `origin main`, so FETCH_HEAD always names the remote's `main`.
+// Returns the commit id; throws the fetch's own error when neither worked.
+async function fetchRemoteMainCommit(timeout) {
+  let fetchErr = null;
+  for (const args of [['origin', 'main'], ['--refmap=', 'origin', 'main']]) {
+    try {
+      await gitFetch(args, { timeout });
+      const c = await commitOrNull('FETCH_HEAD');
+      if (c) return c;
+    } catch (err) { fetchErr = err; }
+  }
+  throw fetchErr || new Error("git fetch failed: fatal: couldn't find remote ref main");
+}
+
+// The commit pull() assessed and merged, handed to the push half of the same
+// sync() so it assesses the SAME remote (audit m5). A symbol: never in JSON.
+const ASSESSED_REMOTE = Symbol('assessedRemote');
+// The fetch answered that the remote has no `main` (an emptied repository).
+const NO_REMOTE_MAIN = Symbol('noRemoteMain');
+
+/**
+ * The remote commit Push only assesses: fetched, so neither a missing nor a
+ * stale `refs/remotes/origin/main` decides it. A remote with no `main` (a
+ * first push) is null: nothing on it can be deleted. When the fetch fails for
+ * another reason (offline), the last-fetched ref stands in if there is one
+ * (the push fails on the same network anyway); with no ref and a history
+ * here, the fetch's error is thrown rather than assessing against nothing.
+ */
+async function remoteCommitForPush() {
+  try {
+    const c = await fetchRemoteMainCommit(120000);
+    // The fetch may have moved `origin/main`: a cached badge answer is stale.
+    invalidateRemoteCache();
+    return c;
+  } catch (err) {
+    if (/couldn't find remote ref/i.test(String(err && (err.stderr || err.message)))) return NO_REMOTE_MAIN;
+    const ref = await commitOrNull('refs/remotes/origin/main');
+    if (ref) return ref;
+    if (!(await commitOrNull('HEAD'))) return null;
+    throw err;
+  }
+}
+
 async function mergeBaseOrNull(a, b) {
   const r = await gitArgv(['merge-base', a, b], { okCodes: [1] });
   return r.code === 1 ? null : (r.stdout.trim() || null);
@@ -3044,6 +3171,12 @@ export async function push(opts = {}) {
   const confirmed = confirmedTokens(opts.confirmDeletions);
   // Before anything is written, the work tree included (audit O1).
   await assertSyncedFolderUnchanged();
+  // The remote commit the deletion guard assesses (audit M1), fetched before
+  // anything here is touched: a fetch that fails (offline, no remembered
+  // copy) then leaves the index and the folder exactly as they were.
+  const fetched = opts[ASSESSED_REMOTE] !== undefined ? opts[ASSESSED_REMOTE] : await remoteCommitForPush();
+  const remoteHasNoMain = fetched === NO_REMOTE_MAIN;
+  const remote = remoteHasNoMain ? null : fetched;
   // Self-heal: existing installs configured before a DOMAINS_GITIGNORE_RULES
   // addition (e.g. the */.write-lock rule) never re-run ensureDomainsGitignore()
   // otherwise — it was previously only called from setup(). Idempotent no-op
@@ -3091,9 +3224,10 @@ export async function push(opts = {}) {
   if (uncommittedCount > 0) await stageAll(safety);
   // THE DELETION GUARD, after staging and before the commit (see above): what
   // this push would delete from GitHub, staged or in commits not yet pushed
-  // (Pull only's auto-save). Against the remote as last fetched; a push over
-  // a remote that moved is refused by GitHub anyway.
-  await guardDeletions(await commitOrNull('refs/remotes/origin/main'), confirmed, ['out'], gitignoreBefore);
+  // (Pull only's auto-save). Against the remote commit fetched above (or the
+  // one the pull half of this Sync merged); a push over a remote that moved
+  // since is refused by GitHub anyway.
+  await guardDeletions(remote, confirmed, ['out'], gitignoreBefore);
 
   if (uncommittedCount > 0) {
     const now  = new Date();
@@ -3125,13 +3259,19 @@ export async function push(opts = {}) {
   let aheadCount = 0;
   let filesToPush = 0;
   let filePreview = [];
+  // Counted against the commit the guard assessed (audit M1: a stale or
+  // missing `origin/main` miscounted); `origin/main` only when none is known.
+  const countBase = remote || 'origin/main';
   try {
-    const { stdout: ahead } = await git(['rev-list', '--count', 'origin/main..HEAD']);
+    // The remote has no `main`: everything goes, as on a first push (a
+    // leftover `origin/main` used to make this "already up to date").
+    if (remoteHasNoMain) throw new Error('no remote main');
+    const { stdout: ahead } = await git(['rev-list', '--count', `${countBase}..HEAD`]);
     aheadCount = parseInt(ahead.trim(), 10) || 0;
     if (aheadCount > 0) {
-      const { stdout: baseOut } = await git(['merge-base', 'HEAD', 'origin/main']);
+      const { stdout: baseOut } = await git(['merge-base', 'HEAD', countBase]);
       const base = baseOut.trim();
-      const diffRange = base ? `${base}..HEAD` : 'origin/main..HEAD';
+      const diffRange = base ? `${base}..HEAD` : `${countBase}..HEAD`;
       const { stdout: names } = await git(['diff', '--name-only', diffRange]);
       const list = names.split('\n').filter(Boolean);
       filesToPush = list.length;
@@ -3149,6 +3289,9 @@ export async function push(opts = {}) {
   }
 
   if (aheadCount === 0) {
+    // Nothing to send, but this push got past both checks: the folder is the
+    // synced one from here on (the legacy check used to record it itself).
+    await recordSyncFolder();
     const done = await finishWithBackup({ pushed: false, filesChanged: 0, commitsAhead: 0 }, safety);
     return {
       ...done,
@@ -3285,16 +3428,9 @@ export async function pull(opts = {}) {
   let filesPulled = 0;
   let commitsPulled = 0;
   let filePreview = [];
-  let target = null;
-  let fetchErr = null;
-  for (const args of [['origin', 'main'], ['--refmap=', 'origin', 'main']]) {
-    try {
-      await gitFetch(args, { timeout: 120000 });
-      target = await commitOrNull(args[0] === 'origin' ? 'refs/remotes/origin/main' : 'FETCH_HEAD');
-      if (target) break;
-    } catch (err) { fetchErr = err; }
-  }
-  if (!target) throw fetchErr || new Error("git fetch failed: fatal: couldn't find remote ref main");
+  // From FETCH_HEAD, never `refs/remotes/origin/main` (audit M1): see
+  // fetchRemoteMainCommit().
+  const target = await fetchRemoteMainCommit(120000);
   try {
     const incoming = await countIncoming(target);
     commitsPulled = incoming.commits;
@@ -3421,7 +3557,7 @@ export async function pull(opts = {}) {
   invalidateRemoteCache();
   await recordSyncSuccess();
 
-  return finishWithBackup({
+  const pulledResult = await finishWithBackup({
     pulled: true,
     filesChanged: filesPulled,
     commitsPulled,
@@ -3437,6 +3573,8 @@ export async function pull(opts = {}) {
     recordsMerged,
     details: pullOut,
   }, safety);
+  Object.defineProperty(pulledResult, ASSESSED_REMOTE, { value: target, enumerable: false });
+  return pulledResult;
 }
 
 /**
@@ -3773,7 +3911,10 @@ export async function sync(opts = {}) {
   // the deletion set, not to HEAD, so the pull's auto-save does not make the
   // push ask again.
   const pullResult = await pull(opts);
-  const pushResult = await push(opts);
+  // The push half assesses the commit the pull merged (audit m5), never a ref
+  // the pull may not have moved.
+  const assessed = pullResult && pullResult[ASSESSED_REMOTE];
+  const pushResult = await push(assessed ? { ...opts, [ASSESSED_REMOTE]: assessed } : opts);
   return { pullResult, pushResult };
 }
 

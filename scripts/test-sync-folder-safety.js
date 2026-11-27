@@ -758,18 +758,27 @@ section('§9 N2/N3 — the folder-changed refusal names only a way out that work
   ok(!back.err, 'Sync works again', back.err && back.err.message);
   ok(remoteFiles(remote).includes('physics/wiki/new.md') && before.every((f) => remoteFiles(remote).includes(f)), 'and nothing was lost on the remote');
 
-  // No record (the legacy check): no folder to go back to, so the sentence
-  // names only Disconnect, and the route still refuses (the sentence is true).
+  // No record (the legacy check): no recorded folder to name, so the sentence
+  // names none. v4.2.1 audit M2: the way back is open all the same: the route
+  // accepts a folder that holds every file Sync backs up, and says so when it
+  // refuses one that does not.
   gitRun(['--git-dir', c.gitDir, 'config', '--unset', T.WORK_TREE_KEY]);
+  try { gitRun(['--git-dir', c.gitDir, 'config', '--unset-all', 'curator.workTreeReal']); } catch { /* none recorded */ }
   __setDomainsDirOverride(third);
   const lr = await attempt(sync.push);
   eq(codeOf(lr), 'folder-changed', 'no record, a folder with none of the tracked domains: refused');
   const lmsg = sync.describeSyncError(lr.err).error;
-  ok(/Disconnect/.test(lmsg) && !/back to it in Settings:/.test(lmsg), 'and the sentence does not promise a Settings change the route would refuse', lmsg);
+  ok(/Disconnect/.test(lmsg) && !/back to it in Settings:/.test(lmsg) && /holds? every file Sync backs up/.test(lmsg),
+    'and the sentence names no folder and says which one Settings accepts', lmsg);
   ok(!sync.isRecordedSyncFolder(synced), 'with no record, no folder is "the recorded one"');
+  const t2b = fakeRes();
+  cfgRoutes.domainsPathHandler({ body: { path: fresh('legacy-empty') } }, t2b, null);
+  ok(t2b.statusCode === 400 && /has not yet recorded which knowledge folder/.test(t2b.body && t2b.body.error),
+    'the route refuses a folder missing the tracked files, with the no-record sentence', t2b.body);
   const t3 = fakeRes();
   cfgRoutes.domainsPathHandler({ body: { path: synced } }, t3, null);
-  eq(t3.statusCode, 400, 'and the route refuses, as the sentence says');
+  eq(t3.statusCode, 200, 'and accepts the folder that holds every tracked file, as the sentence says');
+  __setDomainsDirOverride(third);
   // A global setting of the same key is never read as this repo's record.
   const gcfg = path.join(TMP_HOME, '.gitconfig');
   writeFileSync(gcfg, `[curator]\n\tworkTree = ${synced}\n`);

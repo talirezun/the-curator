@@ -147,6 +147,12 @@ function freshState() {
     // v4.2.1: the deletion guard's question (the outcome it arrived on):
     // {kind, details, confirmed}. Shown as the confirm card instead of the error.
     deletionAsk: null,
+    // The question whose heading already took the focus (audit m4).
+    deletionFocusedToken: null,
+    // Delete them was pressed: its button goes with the card, so when that
+    // run settles the focus returns to the button of the action it answered
+    // (audit m4: it was left on the page body).
+    focusAfterConfirm: null,
     statusErrorDetail: null,
     statusErrorCode: null,
     // Replace token (2026-11-19). `token` holds keystrokes only until the
@@ -304,6 +310,15 @@ function onSyncRunChanged(mountToken) {
   // A refused token: the panel opens beside the error and takes the focus once.
   if (!run && tokenPanelOpen(state)) state.tokenForm.focusPending = true;
   render(mountToken);
+  if (!run && state.focusAfterConfirm) {
+    // A new question (the set changed) takes the focus on its own heading.
+    const btnId = state.deletionAsk ? null : state.focusAfterConfirm;
+    state.focusAfterConfirm = null;
+    let lost = false;
+    try { lost = !document.activeElement || document.activeElement === document.body; } catch { lost = false; }
+    const btn = btnId && lost ? document.getElementById(btnId) : null;
+    if (btn && typeof btn.focus === 'function') { try { btn.focus(); } catch { /* not focusable */ } }
+  }
   if (!run && wasActing && SYNC_RUN_KINDS.indexOf(wasActing) !== -1) {
     Promise.all([loadStatus(mountToken), loadDomains(mountToken), loadBackup(mountToken)])
       .then(() => { if (isCurrentMount(mountToken)) render(mountToken); })
@@ -484,10 +499,31 @@ function render(token) {
   let refocus = false;
   try { refocus = !!document.activeElement && document.activeElement.id === 'sync-token-input'; } catch { refocus = false; }
   if (refocus && state.tokenForm) state.tokenForm.focusPending = true;
+  // The same for the deletion card's heading (audit m4): a repaint after the
+  // run settles (the counts re-read) rebuilds it, and the focus must stay.
+  try {
+    if (document.activeElement && document.activeElement.id === 'sync-deletion-title') state.deletionFocusedToken = null;
+  } catch { /* no document focus to read */ }
+  // And for the three run buttons: the re-read of the counts after a run
+  // repaints them, and a keyboard user keeps their place (audit m4: after
+  // Delete them the focus fell to the page body).
+  let runBtnId = null;
+  try {
+    const a = document.activeElement;
+    if (a && RUN_BUTTON_IDS.indexOf(a.id) !== -1) runBtnId = a.id;
+  } catch { runBtnId = null; }
   renderSidebar(token);
   renderMain(token);
   wireListeners();
+  if (runBtnId) {
+    try {
+      const a = document.activeElement;
+      const btn = document.getElementById(runBtnId);
+      if (btn && (!a || a === document.body)) btn.focus();
+    } catch { /* not focusable right now */ }
+  }
 }
+const RUN_BUTTON_IDS = ['btn-sync-now', 'btn-sync-push', 'btn-sync-pull'];
 
 function renderSidebar(token) {
   // The per-domain STATE column that used to sit at the end of each row was
@@ -1109,7 +1145,13 @@ function wireListeners() {
     state.deletionAsk = null;
     state.actionError = null;
     state.actionErrorCode = null;
-    state.actionMessage = 'Cancelled. Nothing was changed: no file was deleted here or on GitHub.';
+    // An incoming question cancelled: this computer still has the pages
+    // GitHub no longer does, and every later sync asks again (audit m2). Say
+    // the way that puts them back (measured: Disconnect, then Merge).
+    state.actionMessage = 'Cancelled. Nothing was changed: no file was deleted here or on GitHub.' +
+      (ask.details && ask.details.direction === 'in'
+        ? ' To put these pages back on GitHub, choose Disconnect this repository below, then connect to the same repository again and choose Merge \u2014 keep both.'
+        : '');
     render(myMountToken);
     const now = document.getElementById('btn-sync-now');
     if (now && typeof now.focus === 'function') { try { now.focus(); } catch { /* not focusable */ } }
@@ -1132,8 +1174,17 @@ function wireListeners() {
     if (!ask || currentSyncRun()) return;
     const tokens = ask.confirmed.concat([ask.details.confirmToken]);
     state.deletionAsk = null;
+    state.focusAfterConfirm = ask.kind === 'push' ? 'btn-sync-push' : ask.kind === 'pull' ? 'btn-sync-pull' : 'btn-sync-now';
     onAction(ask.kind, myMountToken, { confirmDeletions: tokens });
   });
+  // When a question appears (a new one: each token once), the focus goes to
+  // its heading, so a keyboard user starts at the card, not at the top of the
+  // page (audit m4). A repaint of the same question leaves the focus alone.
+  const delTitle = document.getElementById('sync-deletion-title');
+  if (delTitle && state.deletionAsk && state.deletionFocusedToken !== state.deletionAsk.details.confirmToken) {
+    state.deletionFocusedToken = state.deletionAsk.details.confirmToken;
+    try { delTitle.focus(); } catch { /* not focusable right now */ }
+  }
 
   const tokOpen = document.getElementById('btn-token-open');
   if (tokOpen) tokOpen.addEventListener('click', () => {
