@@ -248,7 +248,9 @@ section('§4 the layouts — Simple and Pro from one model');
   const tabIds = (h) => [...h.matchAll(/data-kit-tab="([a-z]+)"/g)].map((x) => x[1]);
   ok(JSON.stringify(tabIds(simple)) === JSON.stringify(['now', 'agents', 'kit']), 'Simple draws Now · Agents · Starting kit', tabIds(simple));
   ok(JSON.stringify(tabIds(pro)) === JSON.stringify(['now', 'agents', 'kit', 'history', 'budget', 'computers']), 'Pro adds History · Budget · Computers', tabIds(pro));
-  ok(words(simple).includes(P.MORE_IN_PRO_LINE) && !words(pro).includes('More in Pro'), 'the ONE quiet "More in Pro" line, in Simple only');
+  // Re-audit 2 item 4: a LITERAL, not the constant — a test that compares the page
+  // with the constant it was drawn from cannot fail on the words.
+  ok(words(simple).includes('More in Pro: the latest note of each work-stream, the token budget, your computers.') && !words(pro).includes('More in Pro'), 'the ONE quiet "More in Pro" line, in Simple only, in the words the guide quotes');
   ok((simple.match(/More in Pro/g) || []).length === 1, 'exactly one "More in Pro" line on the Simple page');
   ok(/data-tiles/.test(pro) && !/data-tiles/.test(simple), 'the tile strip is Pro\'s; Simple has the one status sentence');
   ok(/<h1 class="kit-op-title">my-app<\/h1>/.test(simple), 'the title is the project\'s own name (no "Project context")');
@@ -708,8 +710,47 @@ section('§17 v4.3.0 fix round — must-fix 6–9 and review item 3/4/5/7/9/11, 
   ok(runRender(mkDoc({ tag: 'INPUT', inView: true }), undefined).calls.includes('main'), 'a paint a PRESS asked for is never delayed');
   ok(runRender(mkDoc({ tag: 'INPUT', type: 'checkbox', inView: true }), 'idle').calls.includes('main'), 'a focused checkbox is not "typing"');
   ok(runRender(mkDoc({ tag: 'INPUT', inView: false }), 'idle').calls.includes('main'), 'a field in another part of the app (not this view) does not hold the paint');
-  for (const fn of ['loadCapture', 'loadKnowledge', 'patchSetup', 'patchSessionStart', 'loadDomainList', 'refreshIndex', 'maybeLoadNewest']) {
+  for (const fn of ['loadCapture', 'loadKnowledge', 'patchSessionStart', 'loadDomainList', 'refreshIndex', 'maybeLoadNewest']) {
     ok(/render\(token, 'idle'\)/.test(lift(mv, fn)) && !/render\(token\);/.test(lift(mv, fn)), fn + ' paints as a BACKGROUND paint (render(token, \'idle\'))');
+  }
+  // ── re-audit 2 item 1: a paint a PRESS asked for is NEVER deferred ──
+  // patchSetup is reached from presses (Use, a refusal under the field, Add,
+  // Check again, Sync now) AND from the background check. Driven for real:
+  // patchSetup → render with the caret in a field on the page.
+  {
+    const drive = (pressed) => {
+      const calls = [];
+      const timers = [];
+      const st = {};
+      const doc = mkDoc({ tag: 'INPUT', inView: true });
+      doc.getElementById = () => null;
+      const render = new Function('isCurrentMount', 'screenSignature', 'captureFocus', 'renderSidebar', 'renderMain', 'wire', 'wireProjects', 'restoreFocus',
+        'maybeLoadSessionStart', 'maybeLoadSetup', 'document', 'state', 'setTimeout',
+        'let renderedSignature = null;\n' + lift(mv, 'render') + '\nreturn render;')(
+        () => true, () => 's', () => {}, () => calls.push('sidebar'), () => calls.push('main'), () => {}, () => {}, () => {}, () => {}, () => {},
+        doc, st, (fn, ms) => { timers.push(ms); });
+      const patch = new Function('document', 'state', 'render', 'setupFor', 'setupReader', 'isCurrentReader', 'paintConnect',
+        lift(mv, 'patchSetup') + '\nreturn patchSetup;')(doc, { connect: null }, render, () => null, null, () => false, () => {});
+      patch(1, pressed);
+      return { calls, timers };
+    };
+    const bg = drive(false);
+    ok(bg.calls.length === 0 && bg.timers.length === 1, 'patchSetup from the background check, caret in a field: DEFERRED (it waits for the field)', JSON.stringify(bg));
+    const pr = drive(true);
+    ok(pr.calls.includes('main') && pr.timers.length === 0, 'patchSetup from a PRESS, caret in the same field: painted AT ONCE (the outcome or refusal shows without a blur)', JSON.stringify(pr));
+    // Every press path passes `pressed`; the two background starts do not.
+    for (const [fn, re] of [
+      ['saveSetupRepo', /patchSetup\(token, true\)[\s\S]*maybeLoadSetup\(token, true, true\)/],
+      ['saveCustomTool', /patchSetup\(token, true\)/],
+      ['addSetupTool', /patchSetup\(token, true\)/],
+      ['reloadSetupThenOpen', /loadSetup\(domain, project, token, true\)/],
+      ['loadSetup', /patchSetup\(token, pressed\);[\s\S]*patchSetup\(token, pressed\);/],
+      ['maybeLoadSetup', /loadSetup\(domain, project, token, pressed\)/],
+    ]) ok(re.test(lift(mv, fn)), fn + ': a press\'s paint is marked pressed', lift(mv, fn).slice(0, 200));
+    const bs = lift(mv, 'bindSetup');
+    ok(!/patchSetup\(token\)/.test(bs) && (bs.match(/patchSetup\(token, true\)/g) || []).length >= 7, 'bindSetup: every patchSetup in the press handlers is pressed (none is a background paint)');
+    ok(!/maybeLoadSetup\(token, true\)/.test(bs) && /act === 'check'\) \{ maybeLoadSetup\(token, true, true\)/.test(bs), '...and every re-check a press asks for is pressed');
+    ok(/maybeLoadSetup\(token, true\);/.test(lift(mv, 'refreshSetupOnWake')), 'the wake re-check stays a background paint');
   }
   // ── e2e M4: focus returns to the pressed control, never body ──
   const focusRig = (pressed) => {
@@ -805,6 +846,297 @@ section('§18 should-fix — one source per figure; the Simple note reader');
   ok(/The latest note of each work-stream, per computer/.test(h) && /1 harness</.test(h), 'History says what it lists, and "1 harness" (not "1 harnesses")');
   const cl = P.checklistHtml(M.connectChecklist({ harnessRows: [], setup: { tools: [] } }));
   ok(/Three steps/.test(cl) && JSON.stringify([...cl.matchAll(/prj-step-num" aria-hidden="true">([^<]+)</g)].map((x) => x[1])) === '["✓","1","2","3"]', '"Three steps" and three numbers (the project already exists: ✓)');
+}
+
+section('§19 re-audit 2 (v4.3.0 final fix round) — items 1, 2, 6 and 7, driven');
+{
+  const mv = readFileSync(join(ROOT, 'src/public/next/views/memory.js'), 'utf8');
+  const lift = (src, name) => {
+    const m = new RegExp('(?:^|\\n)(?:export\\s+)?(?:async\\s+)?function ' + name + '\\s*\\(').exec(src);
+    if (!m) throw new Error('lift: "' + name + '" not found');
+    const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
+    let p = src.indexOf('(', start), d = 0;
+    for (; p < src.length; p++) { if (src[p] === '(') d++; else if (src[p] === ')') { d--; if (!d) { p++; break; } } }
+    let i = src.indexOf('{', p); d = 0;
+    for (; i < src.length; i++) { if (src[i] === '{') d++; else if (src[i] === '}') { d--; if (!d) { i++; break; } } }
+    return src.slice(start, i);
+  };
+  // LIFT AND RUN, with every free name answered by `env` (else the real
+  // global, else a stub returning ''). The lifted functions are the shipped
+  // ones; only their surroundings are stand-ins. Sloppy-mode `with` is what
+  // lets a 13,000-line module's function run without naming its every import.
+  const liftRun = (names, env) => {
+    const stub = () => '';
+    const scope = new Proxy({}, {
+      has: (t, k) => typeof k === 'string' && !names.includes(k),
+      get: (t, k) => {
+        if (k === Symbol.unscopables) return undefined;
+        if (Object.prototype.hasOwnProperty.call(env, k)) return env[k];
+        if (k in globalThis) return globalThis[k];
+        return stub;
+      },
+      set: (t, k, v) => { env[k] = v; return true; },
+    });
+    // eslint-disable-next-line no-new-func
+    return new Function('__scope', 'with (__scope) {\n' + names.map((n) => lift(mv, n)).join('\n')
+      + '\nreturn { ' + names.join(', ') + ' };\n}')(scope);
+  };
+  // A small DOM: a view root, a body, focusable buttons and inputs.
+  const mkEl = (o = {}) => {
+    const el = { tagName: o.tag || 'BUTTON', type: o.type || '', id: o.id || '', value: o.value || '', disabled: !!o.disabled,
+      attrs: { ...(o.attrs || {}) }, isConnected: true, listeners: {}, scrolled: [],
+      getAttribute: (k) => (k in el.attrs ? el.attrs[k] : (k === 'id' && el.id ? el.id : null)),
+      setAttribute: (k, v) => { el.attrs[k] = String(v); }, removeAttribute: (k) => { delete el.attrs[k]; },
+      addEventListener: (ev, fn) => { (el.listeners[ev] = el.listeners[ev] || []).push(fn); },
+      closest: (sel) => (o.inView === false ? null : (/\.mem-fnd-editor|\.mem-fnd-delete-bar/.test(sel) ? (o.box || null) : (/#view-root/.test(sel) ? {} : null))),
+      scrollIntoView: (opts) => { el.scrolled.push(opts); },
+      setSelectionRange: () => {},
+      dataset: o.dataset || {},
+    };
+    el.focus = () => { if (el.disabled) return; doc.activeElement = el; };
+    return el;
+  };
+  let doc;
+  const mkDocument = (els) => {
+    doc = { body: { tagName: 'BODY' }, activeElement: null, els,
+      getElementById: (id) => els.find((e) => e.id === id && e.isConnected) || null,
+      querySelector: (sel) => {
+        const m = /\[([\w-]+)="([^"]*)"\]/.exec(sel);
+        if (/\[role="tab"\]\[aria-selected="true"\]/.test(sel)) return els.find((e) => e.isConnected && e.attrs.role === 'tab' && e.attrs['aria-selected'] === 'true') || null;
+        if (/aria-expanded="true"/.test(sel)) return null;
+        if (m) return els.find((e) => e.isConnected && e.attrs[m[1]] === m[2]) || null;
+        const h = /#([\w-]+)/.exec(sel.replace(/^#view-root |^#sidebar /, ''));
+        return h ? (els.find((e) => e.isConnected && e.id === h[1]) || null) : null;
+      },
+      querySelectorAll: () => [],
+      createElement: () => mkEl(),
+    };
+    doc.activeElement = doc.body;
+    return doc;
+  };
+
+  // ── item 1, driven end to end: a refused folder, the caret in the field ──
+  {
+    const input = mkEl({ tag: 'INPUT', type: 'text', id: 'mem-setup-repo-input', value: '/no/such' });
+    const d = mkDocument([input]);
+    d.activeElement = input;
+    const painted = [];
+    const timers = [];
+    const env = { document: d, state: { activeDomain: 'a', activeProject: 'p', connect: null }, isCurrentMount: () => true,
+      screenSignature: () => 's', renderedSignature: null, captureFocus: () => {}, restoreFocus: () => {}, wire: () => {}, wireProjects: () => {},
+      renderSidebar: () => painted.push('sidebar'), renderMain: () => painted.push('main'), maybeLoadSessionStart: () => {},
+      setupFor: () => null, setupReader: null, isCurrentReader: () => false, paintConnect: () => {},
+      setTimeout: (fn, ms) => { timers.push(ms); }, reportAsyncActionFailure: () => {},
+      failText: (j) => j.error, fetch: async () => ({ ok: false, status: 400, json: async () => ({ error: 'There is no folder at /no/such on this computer.' }) }) };
+    env.maybeLoadSetup = () => painted.push('reload');
+    const api = liftRun(['saveSetupRepo', 'patchSetup', 'render'], env);
+    await api.saveSetupRepo('/no/such', 1);
+    ok(painted.includes('main') && timers.length === 0 && /no folder/.test(env.state.setupRepoError || ''),
+      'item 1: Use/Enter on a folder that does not exist, caret STILL in the field → the refusal paints AT ONCE (never deferred to the blur)', JSON.stringify({ painted, timers, err: env.state.setupRepoError }));
+    // …and a background check in the same situation still waits.
+    painted.length = 0;
+    api.patchSetup(1, false);
+    ok(painted.length === 0 && timers.length === 1, 'item 1 CONTROL: a background reading with the caret in the field still waits (e2e M3 holds)', JSON.stringify({ painted, timers }));
+    // The GOOD path: the folder is saved, and the re-check it asks for — which
+    // takes the field and the old error away — is a PRESSED paint too.
+    const reloads = [];
+    env.maybeLoadSetup = (...a) => reloads.push(a.slice(1));
+    env.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
+    await api.saveSetupRepo('/a/real/folder', 1);
+    ok(reloads.length === 1 && reloads[0][0] === true && reloads[0][1] === true,
+      'item 1: a SAVED folder\'s re-check is pressed (the field and the old error went only on blur)', JSON.stringify(reloads));
+    // …and loadSetup carries `pressed` to its two paints.
+    const paints = [];
+    const l = liftRun(['loadSetup'], { state: { activeDomain: 'a', activeProject: 'p' }, setupFor: () => ({ data: {} }), keyOf: (a, b) => a + '/' + b,
+      setupSeq: 0, setupInFlight: null, isCurrentMount: () => true, patchSetup: (t, pressed) => paints.push(pressed),
+      fetch: async () => ({ ok: true, json: async () => ({ ok: true }) }), failText: () => '', plainError: () => '' });
+    await l.loadSetup('a', 'p', 1, true);
+    ok(paints.length === 2 && paints.every((x) => x === true), '...loadSetup paints both its states as pressed when a press asked', JSON.stringify(paints));
+  }
+
+  // ── item 6: a deferred paint is not LOST — the retry paints once free ──
+  {
+    const input = mkEl({ tag: 'INPUT', type: 'text', id: 'f' });
+    const d = mkDocument([input]);
+    d.activeElement = input;
+    const painted = [];
+    const timers = [];
+    const env = { document: d, state: {}, isCurrentMount: () => true, screenSignature: () => 's', renderedSignature: null,
+      captureFocus: () => {}, restoreFocus: () => {}, wire: () => {}, wireProjects: () => {}, renderSidebar: () => {},
+      renderMain: () => painted.push('main'), maybeLoadSessionStart: () => {}, maybeLoadSetup: () => {},
+      setTimeout: (fn, ms) => { timers.push(fn); } };
+    const api = liftRun(['render'], env);
+    api.render(1, 'idle');
+    ok(painted.length === 0 && timers.length === 1, 'item 6: a background paint while typing waits (one retry armed)');
+    api.render(1, 'idle');
+    ok(timers.length === 1, '...a second background paint meanwhile arms no second retry');
+    d.activeElement = d.body;           // the user left the field
+    timers[0]();
+    ok(painted.includes('main'), 'item 6: when the field is left, the RETRY paints — the deferred paint is never lost', JSON.stringify(painted));
+  }
+
+  // ── item 2 and item 6: focus returns to the press, never steals ──
+  const focusApi = (env) => liftRun(['captureFocus', 'restoreFocus'], { FOCUSABLE_IDS: [], FOCUS_FALLBACK: {}, pendingFocusId: null, ...env });
+  {
+    const tabBtn = mkEl({ id: 'prj-tab-agents', attrs: { role: 'tab', 'aria-selected': 'true' } });
+    const copy = mkEl({ attrs: { 'data-setup-act': 'copy-block' } });
+    const d = mkDocument([tabBtn, copy]);
+    const st = { detailLoading: false, focusSel: null };
+    let now = 1_000_000;
+    const api = focusApi({ document: d, state: st, Date: { now: () => now, parse: Date.parse } });
+    d.activeElement = copy;
+    api.captureFocus();                 // a paint while the press is focused
+    ok(st.focusSel && st.focusSel.sel === '[data-setup-act="copy-block"]', 'SETUP: the press is remembered by its action');
+    // The user clicks away: focus falls to <body>, the button is still there.
+    d.activeElement = d.body;
+    api.captureFocus();                 // the next (background) paint
+    api.restoreFocus();
+    ok(d.activeElement === d.body && st.focusSel === null,
+      'item 2: a press the user LEFT is forgotten — a background paint within 10 s never pulls focus back to it', JSON.stringify({ active: d.activeElement.id || d.activeElement.tagName }));
+    // Another control has focus: restore never takes it.
+    d.activeElement = copy; api.captureFocus();
+    const other = mkEl({ id: 'other' }); d.els.push(other); d.activeElement = other;
+    copy.isConnected = false;           // the paint replaced the pane…
+    const copy2 = mkEl({ attrs: { 'data-setup-act': 'copy-block' } }); d.els.push(copy2);
+    api.restoreFocus();
+    ok(d.activeElement === other, 'item 6: focus the user moved to another control is never taken back (only <body> is restored)');
+    // The 10 s expiry: an old press is never re-applied to a later paint.
+    d.activeElement = copy2; api.captureFocus();
+    copy2.isConnected = false; const copy3 = mkEl({ attrs: { 'data-setup-act': 'copy-block' } }); d.els.push(copy3);
+    d.activeElement = d.body;
+    now += 11_000;
+    api.restoreFocus();
+    ok(d.activeElement === d.body, 'item 6: a press older than 10 s is never re-applied to a later, unrelated repaint');
+    now -= 11_000 - 500;
+    api.restoreFocus();
+    ok(d.activeElement === copy3, '...CONTROL: the same press within 10 s IS restored (to the control the paint drew)');
+    // The pressed control went with its outcome (Sync now's notice, Use's field).
+    d.activeElement = copy3; api.captureFocus();
+    copy3.isConnected = false; d.activeElement = d.body;
+    api.restoreFocus();
+    ok(d.activeElement === tabBtn, 'item 2: when the pressed control is gone with its outcome, focus goes to the open tab\'s button, never <body>');
+  }
+  {
+    // A press that DISABLES its button while it works (Save changes,
+    // "Deleting…"): the target is kept for the paint after it, which lands on
+    // the fallback once the editor has gone.
+    const save = mkEl({ id: 'mem-fnd-save', disabled: true });
+    const docsRow = mkEl({ id: 'prj-kit-documents' });
+    const d = mkDocument([save]);
+    let pending = 'mem-fnd-save';
+    const st = { detailLoading: false, focusSel: null };
+    const api = liftRun(['restoreFocus'], { document: d, state: st, FOCUS_FALLBACK: { 'mem-fnd-save': '#prj-kit-documents' },
+      get pendingFocusId() { return pending; }, set pendingFocusId(v) { pending = v; } });
+    api.restoreFocus();                 // the "Saving…" paint
+    ok(pending === 'mem-fnd-save', 'item 2: a paint where the pressed button is DISABLED keeps the focus target (it was consumed, and focus fell to <body>)', String(pending));
+    save.isConnected = false; d.els.push(docsRow);
+    api.restoreFocus();                 // the editor is gone
+    ok(d.activeElement === docsRow && pending === null, '...and the paint after it lands on the fallback, the Documents row', d.activeElement.id);
+  }
+  {
+    // Sync now keeps focus on itself while it runs (aria-disabled, not disabled).
+    const btn = mkEl({ attrs: { 'data-setup-act': 'sync' }, dataset: { setupAct: 'sync' } });
+    const d = mkDocument([btn]);
+    d.activeElement = btn;
+    let release;
+    const env = { document: d, state: { activeDomain: 'a', activeProject: 'p' }, setupFor: () => null, isCurrentMount: () => true,
+      fetch: () => new Promise((res) => { release = () => res({ ok: true, status: 200, json: async () => ({ ok: true }) }); }),
+      showToast: () => {}, refreshSyncBadge: () => {}, maybeLoadSetup: () => {}, closeReader: () => {}, errorLines: (x) => [x], failText: (j) => '' };
+    const root = { querySelectorAll: (sel) => (sel === '[data-setup-act]' ? [btn] : []), querySelector: () => null };
+    const api = liftRun(['bindSetup'], env);
+    api.bindSetup(root, 1);
+    const p = btn.listeners.click[0]();
+    ok(btn.disabled === false && btn.attrs['aria-disabled'] === 'true' && d.activeElement === btn,
+      'item 2: while Sync now runs it is aria-disabled, NOT disabled — focus stays on it (it fell to <body> for the whole sync)', JSON.stringify(btn.attrs));
+    release(); await p;
+    ok(!('aria-disabled' in btn.attrs) && d.activeElement === btn, '...and afterwards it is pressable again, focus still on it');
+  }
+
+  // ── item 6: the route's notes reach Starting kit (the real prjKitModel) ──
+  {
+    const env = {
+      state: { detail: null, activeDomain: 'a', knowledge: new Map() },
+      isPro: () => false,
+      sessionStartFor: () => ({ data: { notes: ['the foundations manifest could not be read: manifest.json is not valid JSON'] } }),
+      foundationsFacts: () => ({ docs: [], sources: [] }), foundationsBudgetWarning: () => '', prjBudgetNotices: () => [],
+      routeNoteNotices: M.routeNoteNotices, contextWindowIsDefault: () => true, harnessNow: () => null, activeKey: () => 'a/p',
+      planFor: () => null,
+    };
+    const api = liftRun(['prjKitModel'], env);
+    const m = api.prjKitModel({ readonly: false, knowledgeDomains: ['a'] });
+    const said = JSON.stringify(m.notices);
+    ok(/manifest\.json is not valid JSON/.test(said), 'item 6 / audit M1: the session-start route\'s notes are notices on Starting kit, from the REAL prjKitModel', said.slice(0, 300));
+  }
+
+  // ── item 7: Edit lands in the editor; a delete press lands on its confirm ──
+  {
+    const box = { scrollIntoView: (o) => { box.scrolled = o; } };
+    const ta = mkEl({ tag: 'TEXTAREA', id: 'mem-fnd-text', box });
+    const d = mkDocument([ta]);
+    const env = { document: d, state: { activeDomain: 'a', activeProject: 'p' }, isCurrentMount: () => true, render: () => {},
+      fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, text: '# T\n', title: 'T', role: 'other' }) }),
+      FOUNDATION_ROLES: ['other'], failText: () => 'x', plainError: () => 'x' };
+    const api = liftRun(['loadFoundationDraft'], env);
+    await api.loadFoundationDraft('style-guide.md', 1);
+    ok(d.activeElement === ta && box.scrolled && box.scrolled.block === 'start',
+      'item 7: Edit brings the editor into view and puts the caret in its text (it opened at y=999, focus left on Edit)', JSON.stringify({ active: d.activeElement.id, scrolled: box.scrolled }));
+  }
+  {
+    const bar = { scrollIntoView: (o) => { bar.scrolled = o; } };
+    const no = mkEl({ id: 'mem-fnd-stop-no', box: bar });
+    const del = mkEl({ attrs: { 'data-fnd-delete': 'style-guide.md' } });
+    const d = mkDocument([no, del]);
+    d.activeElement = del;
+    const env = { document: d, state: { activeDomain: 'a', activeProject: 'p' }, render: () => {}, isCurrentMount: () => true };
+    const root = { querySelectorAll: (sel) => (sel === '[data-fnd-delete]' ? [del] : []), getElementById: () => null, querySelector: () => null };
+    const api = liftRun(['bindFoundationRows'], env);
+    api.bindFoundationRows(root, 1);
+    (del.listeners.click || [])[0]();
+    ok(d.activeElement === no && bar.scrolled, 'item 7: a document\'s delete press scrolls its confirm into view and puts focus on Keep it', JSON.stringify({ active: d.activeElement.id || d.activeElement.attrs }));
+  }
+}
+
+section('§19b re-audit 2 item 2 — "+ New project" with no domain lands IN the New domain form; item 8 words');
+{
+  // The arrival block of views/domains.js, lifted by brace-matching and run
+  // against a small DOM: "+ New project" with no domain at all asked for the
+  // New domain form (reason 'new-domain'); the form opened, focus stayed on
+  // <body> (re-audit 2 item 2).
+  const dm = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
+  const at = dm.indexOf('if (state.pendingCreateFocus) {');
+  let i = dm.indexOf('{', at), d = 0;
+  for (; i < dm.length; i++) { if (dm[i] === '{') d++; else if (dm[i] === '}') { d--; if (!d) { i++; break; } } }
+  const block = dm.slice(at, i);
+  const run = (which) => {
+    const els = {};
+    const doc = { body: { tagName: 'BODY' }, activeElement: null,
+      getElementById: (id) => els[id] || null };
+    doc.activeElement = doc.body;
+    const mk = (id) => ({ id, focus() { doc.activeElement = this; }, getBoundingClientRect: () => ({ top: 10, bottom: 40 }), scrollIntoView() {} });
+    let clicks = 0;
+    els['dm-new-domain-btn'] = { click: () => { clicks++; els['dm-lc-name'] = mk('dm-lc-name'); } };
+    els['dm-proj-name'] = mk('dm-proj-name');
+    const timers = [];
+    const state = { pendingCreateFocus: which };
+    // eslint-disable-next-line no-new-func
+    new Function('state', 'document', 'window', 'isCurrentMount', 'token', 'setTimeout', block)(
+      state, doc, { innerHeight: 800 }, () => true, 1, (fn) => timers.push(fn));
+    for (let k = 0; k < 5 && timers.length; k++) timers.shift()();
+    return { focus: doc.activeElement && doc.activeElement.id, clicks };
+  };
+  const dom = run('domain');
+  ok(dom.focus === 'dm-lc-name' && dom.clicks === 1, 'item 2: with no domain, "+ New project" opens the New domain form ONCE and puts focus in its Name field (it was <body>)', JSON.stringify(dom));
+  ok(run('project').focus === 'dm-proj-name', '...CONTROL: with a domain, focus goes into the project form\'s name field, as before');
+
+  // Item 8: the leftover words.
+  const mv = readFileSync(join(ROOT, 'src/public/next/views/memory.js'), 'utf8');
+  ok(!/marked read first|plan them under Documents at start/.test(mv.replace(/^\s*(\/\/|\*).*$/gm, '')), 'item 8: no on-screen "marked read first" / "plan them under Documents at start" (Always read / When needed / Hidden)');
+  ok(!/“\+ Add an agent harness” brings it back/.test(mv) && /“\+ Connect an agent” brings it back/.test(mv), 'item 8: the Remove toast names the control both modes draw, "+ Connect an agent"');
+  ok(!/said\.push\(HARNESS_LABEL/.test(mv), 'item 8: Simple\'s Starting kit says no "harness" in its settings line');
+  ok(!/Project context and the bridge/.test(readFileSync(join(ROOT, 'src/public/next/views/onboarding.js'), 'utf8')), 'item 8: first-run says "Projects", not "Project context"');
+  const mx = P.matrixTable({ rows: [{ id: 'r', tool: 'x', harness: 'Antigravity', computer: 'this Mac', kind: 'needs-you', connected: 'yes', skills: 'no', instructions: 'no', hooks: 'no', lastSave: null, saves7: 1, here: true }] });
+  ok(/no note kept/.test(words(mx)) && !/\bnever\b/.test(words(mx)), 'item 8: Pro Agents never says "Last save never" beside a 7-day save count (the note was deleted, the save happened)', words(mx).slice(0, 300));
+  ok(/\bnever\b/.test(words(P.matrixTable({ rows: [{ id: 'r', tool: 'x', harness: 'A', computer: 'this Mac', kind: 'off', lastSave: null, saves7: 0, here: true }] }))), '...CONTROL: with no save at all it still says never');
 }
 
 console.log('\n' + (fail ? '✗' : '✓') + ' test-projects-page: ' + pass + ' passed, ' + fail + ' failed');

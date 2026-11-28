@@ -381,7 +381,33 @@ try {
     // v4.3.0 fix round (e2e M7): whose notes, in plain words; the consequence
     // in one line; the name to type shown as text.
     ok('the card asks whose notes go: "Delete the notes saved as “main”?" (no agent known)', html.includes('Delete the notes saved as “main”?'), html);
-    ok('...and, with the agent known, "Delete Claude Code’s notes on this project?"', V.wsDeleteCardHtml(del({ who: 'Claude Code' }), NOW).includes('Delete Claude Code’s notes on this project?'));
+    // Re-audit 2 item 3 (v4.3.0 final fix round): the question names the
+    // NOTES, never one agent — a work-stream can hold several agents' saves.
+    {
+      const shared = V.wsDeleteCardHtml(del({ thisWord: 'this Mac', preview: { ...preview, machines: [
+        { machine: 'demo-mac-4d3e2f', isThisMachine: true, hasCurrent: true, headline: 'A', writtenAt: '2026-09-25T11:00:00Z', harnessLabel: 'Claude Code' },
+        { machine: 'studio-mac-9a8b7c', isThisMachine: false, hasCurrent: true, headline: 'B', writtenAt: '2026-09-25T10:00:00Z', harnessLabel: 'Antigravity' },
+      ], total: 2, otherMachines: 1 } }), NOW);
+      ok('a work-stream two agents saved into: the question names the NOTES ("Delete the notes saved as “main”?")',
+        shared.includes('>Delete the notes saved as “main”?</div>'), shared);
+      ok('...then says who saved them, every agent with its computer', shared.includes('Saved by Claude Code (this Mac) and Antigravity (studio-mac).'), shared);
+      ok('...and no sentence names ONE agent\'s notes', !/[A-Z][a-z]+(?: [A-Z][a-z]+)?’s notes/.test(shared), (shared.match(/.{30}’s notes.{20}/) || [''])[0]);
+      ok('the question is the same with or without a preview (never "Delete <agent>’s notes")',
+        V.wsDeleteQuestion({ scope: 'main', who: 'Antigravity' }) === 'Delete the notes saved as “main”?');
+      ok('the press says the same: "Delete the notes saved as “main”…"', V.wsDeleteLabel('main') === 'Delete the notes saved as “main”…');
+      ok('who saved them: one agent, one computer', V.wsDeleteSavedBy([{ machine: 'x-aaaaaa', isThisMachine: true, harnessLabel: 'Cursor' }], 'this Mac') === 'Saved by Cursor (this Mac).');
+      ok('...the same agent on two copies of one computer is said once', V.wsDeleteSavedBy([{ machine: 'a', isThisMachine: true, harness: 'codex' }, { machine: 'a', isThisMachine: true, harness: 'codex' }], 'this Mac') === 'Saved by codex (this Mac).');
+      ok('...three are listed with commas and "and"; a copy with no agent named says "an agent"',
+        V.wsDeleteSavedBy([{ machine: 'm1', harnessLabel: 'A' }, { machine: 'm2', harnessLabel: 'B' }, { machine: 'm3' }], 'this Mac') === 'Saved by A (m1), B (m2) and an agent (m3).');
+      ok('...nothing listed: no line at all', V.wsDeleteSavedBy([], 'this Mac') === '');
+      const evil = V.wsDeleteCardHtml(del({ preview: { ...preview, machines: [{ machine: '<b>m</b>', harnessLabel: '<img src=x onerror=alert(1)>' }], total: 1, otherMachines: 1 } }), NOW);
+      ok('...and the saved-by line is escaped', !/<img/.test(evil) && evil.includes('Saved by &lt;img'), evil);
+      // Re-audit 2 item 6: the QUESTION line carries the work-stream's name,
+      // which an agent chooses — it is escaped there too.
+      const hostileScope = V.wsDeleteCardHtml(del({ scope: '<img src=x onerror=alert(1)>', confirmText: '' }), NOW);
+      const titleLine = (/<div class="mem-wsdel-title"[^>]*>([\s\S]*?)<\/div>/.exec(hostileScope) || [])[1] || '';
+      ok('a hostile work-stream name is ESCAPED in the question line', titleLine.includes('&lt;img src=x onerror=alert(1)&gt;') && !/<img/.test(titleLine), titleLine);
+    }
     ok('...says the consequence in one line', html.includes(V.WS_DELETE_CONSEQUENCE));
     ok('...shows the name to type as visible text', /These notes are saved under the name <code class="mem-wsdel-name[^"]*">main<\/code>\. Type it to confirm:/.test(html), html);
     ok('...and the confirm button says what it does', /id="mem-ws-del-go"[^>]*>Delete these notes</.test(html));
@@ -446,9 +472,10 @@ try {
     ok('the Now card carries ONE delete press for the handoff on it, with the name escaped',
       (w.match(/data-ws-delete=/g) || []).length === 1 && w.includes('data-ws-delete="a&quot;b"'), w);
     ok('...saying whose notes it deletes', w.includes('>Delete the notes saved as “a&quot;b”…</button>'), w);
-    const w2 = P.nowPanel({ hasSave: true, notices: [], earlier: [], handoff: { title: 'T', bodyHtml: '', footer: 'x', deleteScope: 'claude-code', deleteWho: 'Claude Code' },
+    const w2 = P.nowPanel({ hasSave: true, notices: [], earlier: [], handoff: { title: 'T', bodyHtml: '', footer: 'x', deleteScope: 'main', deleteWho: 'Claude Code' },
       deleteHtml: '<div class="mem-wsdel-card">CARD</div>' });
-    ok('...by the agent when it is known ("Delete Claude Code’s notes…")', w2.includes('>Delete Claude Code’s notes…</button>'), w2);
+    ok('...by the NOTES\' name even when an agent is known (re-audit 2 item 3: "main" may hold several agents\' saves)',
+      w2.includes('>Delete the notes saved as “main”…</button>') && !/Claude Code’s notes/.test(w2), w2);
     ok('the confirm card renders AT the press — right after the note card, before Earlier notes',
       w2.indexOf('CARD') > w2.indexOf('data-ws-delete') && w2.indexOf('CARD') < (w2.indexOf('Earlier notes') < 0 ? Infinity : w2.indexOf('Earlier notes')));
     ok('...a neutral ghost button, never red (the red is the confirm\'s only)', /class="btn btn-ghost btn-xs" data-ws-delete=/.test(w) && !/btn-danger/.test(w));
@@ -456,7 +483,7 @@ try {
     const rows = [{ id: 'note:a', scope: 'a"b', machine: 'm1', harness: 'Claude Code', model: '', headline: 'h', bytes: 10, seconds: 60, when: '1 min ago', computer: 'this Mac' }];
     const hist = P.historyPanel({ rows, harnesses: [], canDelete: true });
     ok('History: one delete press per row, the same data-ws-delete and label',
-      (hist.match(/data-ws-delete="a&quot;b"/g) || []).length === 1 && hist.includes('aria-label="Delete Claude Code’s notes…"'), hist);
+      (hist.match(/data-ws-delete="a&quot;b"/g) || []).length === 1 && hist.includes('aria-label="Delete the notes saved as “a&quot;b”…"') && !/’s notes/.test(hist), hist);
     ok('History on a read-only mirror (canDelete false) carries NO press', !/data-ws-delete/.test(P.historyPanel({ rows, harnesses: [], canDelete: false })));
   }
 

@@ -1928,10 +1928,16 @@ async function loadDomainsList(token) {
     // anything the user moved it to.
     let tries = 0;
     let scrolled = false;
+    let opened = false;
     const reveal = () => {
       if (!isCurrentMount(token)) return;
-      if (which === 'domain') { const b = document.getElementById('dm-new-domain-btn'); if (b) { b.click(); return; } }
-      const el = which === 'project' ? document.getElementById('dm-proj-name') : null;
+      // re-audit 2 item 2: the New domain form opens ONCE, and focus goes into
+      // its Name field like the project form's (it was left on <body>).
+      if (which === 'domain' && !opened && !document.getElementById('dm-lc-name')) {
+        const b = document.getElementById('dm-new-domain-btn');
+        if (b) { b.click(); opened = true; }
+      }
+      const el = document.getElementById(which === 'project' ? 'dm-proj-name' : 'dm-lc-name');
       const a = document.activeElement;
       if (el && a !== el && (!a || a === document.body)) {
         try { el.focus({ preventScroll: true }); } catch { el.focus(); }

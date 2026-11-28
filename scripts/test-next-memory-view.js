@@ -277,6 +277,11 @@ let failed = 0;
 // (§17) and every assertion over still-shipping code (the routes, the brief
 // editor, the documents, the loaders, the clocks) are NOT retired.
 const RETIRED = new Set(JSON.parse(readFileSync(new URL('./test-helpers/memory-view-retired.json', import.meta.url), 'utf8')).pins);
+// Re-audit 2 item 5: assertions that sit after a gone call but read no gone
+// value, by name, each with its reason (memory-view-retired.json `independent`).
+const RETIRED_JSON = JSON.parse(readFileSync(new URL('./test-helpers/memory-view-retired.json', import.meta.url), 'utf8'));
+const INDEPENDENT = new Map(Object.entries(RETIRED_JSON.independent || {}));
+const independentHit = new Set();
 let retired = 0;
 const retiredHit = new Set();
 const retiredPassed = new Set();
@@ -289,17 +294,34 @@ let currentSection = '';
 // they are retired in memory-view-retired.json (`vacuous`), and the
 // behaviours that still exist are pinned on the new page in
 // scripts/test-projects-page.js §16.
+// v4.3.0 final fix round (re-audit 2 item 5): the taint LASTS. Before, only
+// the FIRST assertion after a gone call was flagged (`goneSeen` caught up at
+// once), so `const s = both(...)` from a gone renderer let every later pin on
+// `s` pass on ''. Now a gone call taints EVERY assertion after it until the
+// next call of a LIVE lifted function (each lifted function stamps a shared
+// sequence when it runs), the next top-level block (`blockStart()`) or the
+// next section(). What that newly flagged is decided BY NAME in
+// memory-view-retired.json: `vacuousLasting` (decided on the stand-in:
+// retired, so it no longer counts as a pass) or `independent` (it reads no
+// gone value — a stylesheet, live source, a real store or a value computed by
+// live code — each entry with its reason; it counts as a pass).
 let goneSeen = 0;
+let sectionSeq = 0;
 let vacuous = 0;
 function ok(label, cond, detail) {
   const key = currentSection + ' :: ' + label;
   const g = globalThis.__memViewGoneCalls || 0;
-  const onGone = g > goneSeen;
+  // Decided on the LAST computation: a gone call taints, and a later call of
+  // a LIVE lifted function (extractFunction counts those too) clears it.
+  const lastGone = globalThis.__memViewLastGone || 0;
+  const lastLive = globalThis.__memViewLastLive || 0;
+  const onGone = g > goneSeen || (lastGone > sectionSeq && lastGone > lastLive);
   goneSeen = g;
-  if (cond && onGone) {
+  if (cond && onGone && !INDEPENDENT.has(key)) {
     if (RETIRED.has(key)) { retired++; retiredHit.add(key); console.log('  ⊘ retired (decided on a gone renderer\'s \'\'): ' + label); return; }
-    vacuous++; failed++; failedKeys.push(key); console.log('  ✗ VACUOUS — passed on a gone renderer\'s \'\' stand-in: ' + label); return;
+    vacuous++; failed++; failedKeys.push(key); if (process.env.MEMORY_VIEW_VACUOUS_LINES) { const ls = (new Error().stack.match(/test-next-memory-view\.js:(\d+)/g) || []).map((x) => +x.split(':')[1]).filter((n) => n > 450); console.log('@L' + ls[0]); } console.log('  ✗ VACUOUS — passed on a gone renderer\'s \'\' stand-in: ' + label); return;
   }
+  if (cond && onGone) independentHit.add(key);
   if (cond) { passed++; if (RETIRED.has(key)) retiredPassed.add(key); console.log('  ✓ ' + label); }
   else if (RETIRED.has(key)) { retired++; retiredHit.add(key); console.log('  ⊘ retired (its page is gone): ' + label); }
   else { failed++; failedKeys.push(key); console.log('  ✗ ' + label + (detail ? ' — ' + detail : '')); }
@@ -307,7 +329,10 @@ function ok(label, cond, detail) {
 function eq(label, actual, expected) {
   ok(label, Object.is(actual, expected), 'got ' + JSON.stringify(actual) + ', expected ' + JSON.stringify(expected));
 }
-function section(t) { currentSection = t; console.log('\n' + t); }
+// A top-level block (each `try {`) starts clean too: its assertions are about
+// what IT computes.
+function blockStart() { sectionSeq = globalThis.__memViewSeq || 0; }
+function section(t) { currentSection = t; sectionSeq = globalThis.__memViewSeq || 0; console.log('\n' + t); }
 // PHASE 2 (Projects, 2026-11-27): every top-level block runs inside
 // try/catch, so a block whose subject is gone cannot abort the blocks after
 // it; a crash is a FAILURE (never silent) unless the block is retired below.
@@ -409,7 +434,7 @@ await ws.saveWorkingState('alpha', {
 // it, so "the mirror appears in the index like any other project" was true of
 // a domain with nothing in it. A mirror's state arrives over SYNC, not through
 // a local save, so writing the files is also the honest fixture.
-try {
+try { blockStart();
   const mdir = join(DOMAINS, 'shared-cohort', 'state', 'main', 'cohort-machine-aa11');
   mkdirSync(mdir, { recursive: true });
   writeFileSync(join(mdir, 'current.md'),
@@ -428,7 +453,7 @@ try {
 // when it has neither a brief nor a save, so `blank` is no longer a row at all
 // and cannot carry an assertion about what a row says.
 makeDomain('briefed');
-try {
+try { blockStart();
   const r = await ws.saveProjectBriefText('briefed', 'briefed',
     '## Standing brief\n\nWritten before the first session.', { authoredBy: { kind: 'human' } });
   if (!r.ok) throw new Error('fixture: brief-only project could not be created: ' + r.message);
@@ -438,7 +463,7 @@ try {
 // across 2 pairs, so `scopeCount` and the pair count are numerically equal
 // and NO assertion could tell them apart — the pairs-vs-work-streams
 // regression would pass silently. With it, alpha is 2 scopes / 3 pairs.
-try {
+try { blockStart();
   const src = join(DOMAINS, 'alpha', 'state', 'feature-x');
   const machine = readdirSync(src, { withFileTypes: true }).filter((e) => e.isDirectory())[0].name;
   const dst = join(src, 'second-machine');
@@ -472,7 +497,7 @@ try {
 //                    number of seconds, and on a copied store git gives every
 //                    file the same mtime, so a whole project can tie at once.
 makeDomain('clocks');
-try {
+try { blockStart();
   const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
   const DAY = 86400000;
   const plant = (project, scope, machine, savedAtIso, mtimeSecondsAgo) => {
@@ -852,7 +877,7 @@ section('§3b — `?open=newest`: the index and the first handoff in ONE answer'
 // present and ABSENT. `open` may not appear, and nothing else may move. Age
 // figures are normalised because the server recomputes them per read against
 // its own `now`; the STAMPS they derive from are left in.
-try {
+try { blockStart();
   const norm = (o) => JSON.stringify(o, (k, v) => (
     (k === 'ageSeconds' || k === 'writtenAgeSeconds' || k === 'arrivedAgeSeconds') ? 0 : v));
   const plain = await call('/:domain/:project',
@@ -879,7 +904,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── 2 · THE PICK IS ON THE AGENT'S CLOCK ────────────────────────────────
-try {
+try { blockStart();
   const skewIdx = await call('/:domain/:project', { params: { domain: 'clocks', project: 'skew' } });
   eq('PRECONDITION: the skew fixture has three pairs across two work-streams',
     (skewIdx.body.scopes || []).length, 3);
@@ -962,7 +987,7 @@ try {
 // fields (`unlistedEntries`, `requestedMachine`, `machineIsThisHost`,
 // `installIdAvailable`, `machinesTruncated`) are exactly the class this repo
 // keeps losing by enumerating. A deep comparison cannot drop one silently.
-try {
+try { blockStart();
   const norm = (o) => JSON.stringify(o, (k, v) => (
     (k === 'ageSeconds' || k === 'writtenAgeSeconds' || k === 'arrivedAgeSeconds') ? 0 : v));
   const opened = await call('/:domain/:project',
@@ -1011,7 +1036,7 @@ try {
 // driven directly rather than left as branches with a comment claiming they
 // work — which is the shape this repo names "a test that proves a line exists
 // proves nothing".
-try {
+try { blockStart();
   const { tableFirstPair } = routerMod;
   ok('the pick is exported so its unreachable rules can be driven at all',
     typeof tableFirstPair === 'function');
@@ -1103,7 +1128,7 @@ function extractFunction(src, name, where) {
       throw new Error(`extractFunction: "${name}" not found in ${where}, and it is not on the GONE_OK list — a missing function is a failure, never a silent '' stand-in`);
     }
     GONE.add(name);
-    return `function ${name}() { globalThis.__memViewGoneCalls = (globalThis.__memViewGoneCalls || 0) + 1; return ''; }`;
+    return `function ${name}() { globalThis.__memViewGoneCalls = (globalThis.__memViewGoneCalls || 0) + 1; globalThis.__memViewLastGone = globalThis.__memViewSeq = (globalThis.__memViewSeq || 0) + 1; return ''; }`;
   }
   const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
   let p = src.indexOf('(', start), parenDepth = 0;
@@ -1112,13 +1137,20 @@ function extractFunction(src, name, where) {
     else if (src[p] === ')') { parenDepth--; if (parenDepth === 0) { p++; break; } }
   }
   let i = src.indexOf('{', p), depth = 0;
+  const bodyAt = i;
   for (; i < src.length; i++) {
     if (src[i] === '{') depth++;
     else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
   }
-  const out = src.slice(start, i).replace(/^export\s+/, '');
+  const raw = src.slice(start, i);
+  const out = raw.replace(/^export\s+/, '');
   if (!/\n\}$/.test(out)) throw new Error(`extractFunction: "${name}" desynced in ${where}`);
-  return out;
+  // A LIVE lifted function stamps the same sequence when it runs, so ok()
+  // knows whether the last thing computed came from a gone stand-in. The
+  // stamp is one statement after the body's `{`, on the same line, so line
+  // structure is unchanged.
+  const at = bodyAt - start - (raw.length - out.length);
+  return out.slice(0, at + 1) + ' globalThis.__memViewLastLive = globalThis.__memViewSeq = (globalThis.__memViewSeq || 0) + 1;' + out.slice(at + 1);
 }
 
 const viewSrc = readFileSync(join(NEXT, 'views/memory.js'), 'utf8');
@@ -1201,7 +1233,7 @@ eq('meta: a scope count with an UNKNOWN age omits the age rather than inventing 
 eq('meta: a null project is the empty string, not a crash', projectMetaLine(null), '');
 
 // splitHandoffPreamble — must never eat a body line, must never empty a doc.
-try {
+try { blockStart();
   const doc = '# Working state — x\n\n> The headline\n\n_Machine: m · Saved: t_\n\n## Where things stand\n\nBody text.\n';
   const r = splitHandoffPreamble(doc);
   eq('preamble split recovers the headline', r.headline, 'The headline');
@@ -1210,20 +1242,20 @@ try {
   ok('preamble split keeps the first section heading', r.body.startsWith('## Where things stand'));
   ok('preamble split keeps the body', r.body.includes('Body text.'));
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // A document with no sections at all: strip NOTHING rather than empty it.
   const doc = '# Just a title\n\n> just a headline\n';
   const r = splitHandoffPreamble(doc);
   eq('a document that is ALL preamble is returned unchanged (fail safe)', r.body, doc);
   eq('...and no headline is claimed from it', r.headline, null);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   const doc = '## Where things stand\n\nStraight into a section.\n';
   const r = splitHandoffPreamble(doc);
   eq('a `## ` section is never mistaken for a doc title', r.body, doc);
   eq('...and no headline is invented', r.headline, null);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   const doc = '# T\n\n> H\n\n## S\n\nFirst.\n\n> A quote in the BODY\n';
   const r = splitHandoffPreamble(doc);
   ok('a quote later in the body survives', r.body.includes('> A quote in the BODY'));
@@ -1231,7 +1263,7 @@ try {
 } catch (e) { blockCrashed(e); }
 eq('splitHandoffPreamble(null) does not throw', splitHandoffPreamble(null).body, '');
 eq('splitHandoffPreamble("") does not throw', splitHandoffPreamble('').body, '');
-try {
+try { blockStart();
   const plain = 'Just some prose with no markdown at all.';
   eq('plain prose is returned untouched', splitHandoffPreamble(plain).body, plain);
 } catch (e) { blockCrashed(e); }
@@ -1960,7 +1992,7 @@ ok('...and the COST of the fact is behind step ②\'s ⓘ: the Memory explainer,
   makeRenderers(hostileState).renderProject().includes(explainerHtml('context.memory'))
   && /reading against your own\s+checkout before you act/.test(readFileSync(join(ROOT, 'docs/user-guide.md'), 'utf8')),
   'the Memory explainer is not step ②\'s panel');
-try {
+try { blockStart();
   const same = makeRenderers(hostileState);
   ok('machineIsThisMachine:true says nothing either',
     !mineNote.test(same.renderSaveStatus(hostileState.projectRead,
@@ -1968,7 +2000,7 @@ try {
 } catch (e) { blockCrashed(e); }
 // ...and the TABLE marks "this machine" under the same rule, for the one row
 // the scoped read actually resolved and for no other.
-try {
+try { blockStart();
   const rows = [{ scope: 'a', machine: 'boxa', writtenAgeSeconds: 60 },
     { scope: 'b', machine: 'boxb', writtenAgeSeconds: 60 }];
   ok('the table marks THIS machine only on an explicit machineIsThisMachine:true',
@@ -1985,7 +2017,7 @@ try {
 ok('a truncated handoff renders a note saying so', handoffHtml(R).includes('mem-note'));
 ok('read-side sanitisation is stated, not hidden',
   handoffHtml(R).toLowerCase().includes('neutralised'));
-try {
+try { blockStart();
   const unknownTotal = makeRenderers({
     ...hostileState,
     detail: { ...hostileDetail, journal: { ...hostileDetail.journal, total: null, totalUnknown: true, totalUnknownReason: 'journal is huge' } },
@@ -1994,7 +2026,7 @@ try {
   ok('an unknown journal total says the count is UNKNOWN', j.includes('unknown'));
   ok('...and does NOT print the tail length as if it were the total', !/of 2\b/.test(j));
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // ── v3.74.0: THE HANDOFF THIS ONE REPLACED (previous.md) ─────────────────
   // The store keeps a replaced handoff by ANOTHER tool once, and the scoped
   // read carries its facts as `previous` — absent when no copy exists.
@@ -2028,7 +2060,7 @@ try {
   ok('...with the agent\'s text escaped like every handoff', !pc.bodyHtml.includes('<script') && !/<img src=x/.test(pc.bodyHtml));
   eq('no text in hand, no payload', R.previousReaderContent(prev, 'api', 'mac-1'), null);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // ── THE PRESS: `?previous=1`, then the reader ────────────────────────────
   const opened = [];
   const urls = [];
@@ -2057,7 +2089,7 @@ try {
   ok('a copy gone by the time of the press (replaced again) is said, not a blank reader',
     opened.length === 2 && /could not be read/.test(opened[1].error || ''), JSON.stringify(opened[1]));
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // ── v3.74.0: WHOSE JOURNAL THIS IS ──────────────────────────────────────
   // The fold counts ONE work-stream's saves — the open handoff's — and read
   // "Journal · 2 saves" beside a project with forty, as if it were the total.
@@ -2077,7 +2109,7 @@ try {
   ok('...escaped, like every other string the agent wrote',
     !/<img src=x/.test(hostile) && /Journal · &lt;img/.test(hostile), hostile.slice(0, 400));
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // THE COUNT IS AN INSTRUMENT NOW, not a sentence: the journal foot renders a
   // shared/text.js .tx-readout ("Save recorded" / "1") instead of the prose
   // "1 save recorded". The PROPERTY under test is unchanged and is the one
@@ -2218,7 +2250,7 @@ try {
 // property a table has and a dropdown did not — that every pair the store
 // returned is ON SCREEN, in the order the store returned it, with its own
 // freshness mark.
-try {
+try { blockStart();
   const nowMs = Date.now();
   const at = (secs) => new Date(nowMs - secs * 1000).toISOString();
   // Four pairs, THREE scopes, one of them duplicated across machines, with
@@ -2318,7 +2350,7 @@ try {
 // reading either clock produces a defensible-looking list and only one of them
 // matches the ages printed in the cells. The fixture is handed over in the
 // STORE's order — mtime, newest first — because that is what the route returns.
-try {
+try { blockStart();
   const day = 86400;
   // `writtenAgeSeconds` is the agent's clock; `lastWriteAt` is the file's, and
   // `effectiveSave` reads it only when no agent time exists at all.
@@ -2435,7 +2467,7 @@ try {
 // container, "Showing N of M" tracking it, and an APPEND rather than a
 // re-render. What is different is the STEP — see WS_STEP_ALL_MAX in memory.js —
 // and the open row, which must never be the one the window hides.
-try {
+try { blockStart();
   const T = makeRenderers(hostileState);
   const mk = (n) => Array.from({ length: n }, (_, i) => ({
     scope: 'ws-' + String(i).padStart(2, '0'), machine: 'boxa',
@@ -2554,7 +2586,7 @@ try {
 // table paints a SORTED copy describes an arrangement that is not on screen.
 // Two saves in the same age band crossing each other move every row and no cell
 // — which is exactly the case a projection off `pr.scopes` cannot see.
-try {
+try { blockStart();
   // `wsShownCount` joins them in v3.56.0: the table paints a WINDOW — the newest
   // five with a "Show N more" footer — so the mark is the rows on screen plus
   // the number hidden behind it, and that split is this function's arithmetic.
@@ -2717,7 +2749,7 @@ const allSummaries = summariesIn(html);
 // so one appearing or one vanishing is still caught.
 ok('the fixture rendered at least 2 <summary> elements (the scan is not vacuous)',
   allSummaries.length >= 2, 'found ' + allSummaries.length);
-try {
+try { blockStart();
   const folds = (html.match(/data-mem-fold="([a-z]+)"/g) || []).sort().join(',');
   ok('...and the page\'s two folds are the brief and the journal, by name',
     folds === 'data-mem-fold="brief",data-mem-fold="journal"', folds);
@@ -2760,7 +2792,7 @@ ok('self-test: the summary scan detects a planted control',
   summariesIn('<summary><button>x</button></summary>').some((s) => s.includes('<button')));
 
 // The journal's "Show more" button exists and is NOT in the summary.
-try {
+try { blockStart();
   const j = makeRenderers({
     ...hostileState,
     journalLimit: 10,
@@ -3068,7 +3100,7 @@ eq('EXACTLY TWENTY-ONE fetches in the view carry a request init', withInit.lengt
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
   fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 21,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
-try {
+try { blockStart();
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
   const withMethod = (m) => inits.filter((x) => new RegExp("\\bmethod\\s*:\\s*'" + m + "'").test(x.init));
   const patches = withMethod('PATCH');
@@ -3329,7 +3361,7 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // key in real code is the brief write's (comments stripped, so the docblock
 // explaining the rule cannot satisfy or violate it), and no alternative
 // transport exists at all.
-try {
+try { blockStart();
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
   ok('exactly TWENTY-ONE `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
@@ -3475,7 +3507,7 @@ function ruleFor(css, selector) {
   if (i === -1) return null;
   return css.slice(i, css.indexOf('}', i));
 }
-try {
+try { blockStart();
   // ── THE SQUARE ROW MARKER IS GONE, AND THAT IS THE UNIFICATION ───────
   //
   // It was an accent-coloured SQUARE, chosen so a project row and a domain
@@ -3906,7 +3938,7 @@ function thirdScopeWritten(writeAtMs) {
 
 // ── §11a — nextPollDelay: the adaptive interval, arithmetic and bounds ────
 
-try {
+try { blockStart();
   const probe = (ms) => { const s = liveState({ lastRefreshMs: ms }); return makeRevalidator(s, () => {}).nextPollDelay(); };
   eq('nextPollDelay: nothing measured yet -> the floor', probe(0), 20000);
   eq('nextPollDelay: a fast refresh stays at the floor', probe(500), 20000);
@@ -3936,7 +3968,7 @@ try {
 // a save that adds a MACHINE under an existing scope leaves scopeCount,
 // headline and age untouched, so nothing but the picker has moved.
 
-try {
+try { blockStart();
   const base = liveState();
   const sigOf = (s) => makeRevalidator(s, () => {}).screenSignature();
 
@@ -3981,7 +4013,7 @@ try {
 
 // ── §11c — the headline: refreshIndex heals the PICKER, not just the row ──
 
-try {
+try { blockStart();
   const s = liveState();
   const detailBefore = s.detail;
   const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
@@ -4025,7 +4057,7 @@ function unchangedIndex(ageSeconds) {
     : { ok: true, json: async () => ({ ok: true, scopes: [] }) };
 }
 
-try {
+try { blockStart();
   const s = liveState();
   // Newest write is OLDER than both marks: nothing has happened.
   const r = makeRevalidator(s, unchangedIndex(30));
@@ -4036,7 +4068,7 @@ try {
   eq('an unchanged poll raises no stale offer', s.staleWrite, false);
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // THE SIGNATURE IS OVER RENDERED TEXT, NOT RAW FIELDS — the doc block's own
   // claim, pinned. An age that moved but still READS the same must not
   // re-render (it would close a <select> the user has open); one that crossed
@@ -4059,7 +4091,7 @@ try {
 // Gating the scope re-read on that mark instead of its own would re-fetch on
 // EVERY poll for as long as the notice is up. Two marks, one request.
 
-try {
+try { blockStart();
   const s = liveState();
   const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
   await r.refreshIndex(1);
@@ -4073,7 +4105,7 @@ try {
 
 // ── §11f — cases where the fresh list is deliberately NOT adopted ────────
 
-try {
+try { blockStart();
   // The selected scope is gone: adopting would leave the <select> unable to
   // show state.scope, so the browser would paint another scope's name over
   // this scope's handoff.
@@ -4090,7 +4122,7 @@ try {
   ok('...while the Reload offer is raised, which is the correct way out', s.staleWrite === true);
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // Nothing selected (an empty project receiving its first save): adopting
   // would paint a scope name over a document that was never read. The Reload
   // offer owns this case.
@@ -4107,7 +4139,7 @@ try {
   ok('...and no document was invented for a scope that was never read', s.detail === null);
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // A failed re-read must change nothing — same rule refreshIndex already
   // follows for the index itself.
   const s = liveState();
@@ -4122,7 +4154,7 @@ try {
   eq('...and never surfaces as a detail error', s.detailError, null);
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // A throwing fetch is the same story.
   const s = liveState();
   const r = makeRevalidator(s, (url) => {
@@ -4138,7 +4170,7 @@ try {
   eq('...and refreshIndex still completes', s.refreshing, false);
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // A remount mid-flight must abandon the result: this view is re-entered
   // constantly from the rail, and a late write would land in another mount.
   const s = liveState();
@@ -4150,7 +4182,7 @@ try {
   eq('...and the sidebar too', s.projects[0].scopeCount, 2);
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // Re-entrancy: the wake handler and the poll can both fire. The second must
   // bail rather than double-fetch.
   const s = liveState({ refreshing: true });
@@ -4162,7 +4194,7 @@ try {
 
 // ── §11g — the poll: a CHAIN, hidden-tab skip, and real teardown ─────────
 
-try {
+try { blockStart();
   const s = liveState();
   const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
   ok('no timer is armed before schedulePoll', !r.armed());
@@ -4189,7 +4221,7 @@ try {
   eq('TEARDOWN: ten minutes unmounted costs ZERO further requests', r.calls.index, at);
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // A hidden tab reschedules WITHOUT fetching — nobody is looking, and the
   // wake handler covers the moment they are.
   const s = liveState();
@@ -4202,7 +4234,7 @@ try {
   r.stopPoll();
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // An unmounted-but-still-armed timer must not fetch either: isCurrentMount
   // is checked inside the callback, not only at arm time.
   const s = liveState();
@@ -4240,7 +4272,7 @@ ok('refreshScopeList never moves the selection',
 // So this is the case where `state.staleWrite` is load-bearing all by
 // itself. Removing it from screenSignature leaves every other §11 assertion
 // green while the notice is computed and never painted.
-try {
+try { blockStart();
   const t0 = 1_000_000;
   const s = liveState({
     scope: 'memory-view', machine: null,                 // nothing chosen
@@ -4411,7 +4443,7 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
     setMounted: (v) => { mounted = v; }, setHidden: (v) => { doc.hidden = v; } };
 }
 
-try {
+try { blockStart();
   const m = mountView();
   const teardown = m.onEnter(7);
   // v4.2: the Pro switch is subscribed once per mount, and released on teardown.
@@ -4475,7 +4507,7 @@ try {
   eq('teardown: the document `visibilitychange` listener is REMOVED', m.listeners.document.length, 0);
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // Two mounts and two teardowns must leave nothing behind — the leak this
   // catches grows one listener pair per rail click.
   const m = mountView();
@@ -4490,7 +4522,7 @@ try {
 // Scoped source checks for the two things execution cannot see: that the
 // schedule call is in the MOUNT half and the stop call is in the TEARDOWN
 // half. Stated as source scans, because they are.
-try {
+try { blockStart();
   const onEnterSrc = functionSource(viewNoComments, 'onEnter');
   const tIdx = onEnterSrc.indexOf('return () =>');
   ok('onEnter contains a returned teardown closure', tIdx > 0);
@@ -4553,7 +4585,7 @@ ok('FOCUSABLE_IDS was lifted from real source and is non-trivial',
 ok('FOCUS_FALLBACK was lifted from real source',
   !!FOCUS_FALLBACK_SRC && typeof FOCUS_FALLBACK_SRC === 'object');
 
-try {
+try { blockStart();
   // render() paints BOTH panes, wires them, and records the signature.
   const r = makeFocusRig();
   r.render(1);
@@ -4562,7 +4594,7 @@ try {
   eq('render() re-wires the result', r.painted.wire, 1);
   eq('render() records the signature it just painted', r.sig(), 'SIG');
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // A stale mount paints nothing at all.
   const body =
     'let pendingFocusId = null;\nlet renderedSignature = null;\n' +
@@ -4587,7 +4619,7 @@ try {
   eq('a render for a STALE mount paints nothing', painted, 0);
   eq('...and does not touch the signature either', api.sig(), null);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // Capture + restore, the real thing.
   const r = makeFocusRig({ activeId: 'mem-journal-more', presentIds: ['mem-journal-more'] });
   r.captureFocus();
@@ -4602,7 +4634,7 @@ try {
     JSON.stringify(r.focused.length ? r.focused[0].opts : null));
   eq('...and the pending target is cleared once it lands', r.pending(), null);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // The case that matters: "Show more" REMOVES itself, so a by-id-only
   // restore would drop focus every time it worked.
   // v4.3.0 fix round (audit minor): the journal fold went with the five-step
@@ -4613,7 +4645,7 @@ try {
   eq('a control that removed itself falls back to the nearest stable thing',
     r.focused.length ? r.focused[0].id : null, 'prj-now-h');
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // Reload dismisses the notice it lives in — same shape, its own fallback.
   const r = makeFocusRig({ activeId: 'mem-reload', presentIds: ['mem-refresh'] });
   r.captureFocus();
@@ -4621,7 +4653,7 @@ try {
   eq('Reload falls back to the sidebar Refresh, which does the same KIND of thing',
     r.focused.length ? r.focused[0].id : null, 'mem-refresh');
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // Never reach out of our own view.
   const r = makeFocusRig({ activeId: 'rail-btn-domains', presentIds: ['rail-btn-domains'] });
   r.captureFocus();
@@ -4629,7 +4661,7 @@ try {
   r.restoreFocus();
   eq('...and restoreFocus therefore focuses nothing', r.focused.length, 0);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // A miss is held while another render is still coming, dropped afterwards.
   //
   // `mem-ws-active` is the v3.55.0 stand-in for the retired `mem-machine-select`
@@ -4667,7 +4699,7 @@ section('§14 — The Reload OFFER is painted, and reaches every content branch'
 // you — with every other assertion in this file still green. Executed here,
 // and executed THROUGH renderProject, so it is proven to reach the page.
 
-try {
+try { blockStart();
   const quiet = makeRenderers({ ...hostileState, staleWrite: false });
   eq('no write since arrival renders no notice at all', quiet.renderStaleNotice(), '');
 
@@ -4683,7 +4715,7 @@ try {
   ok('...and it says what is below MAY not be latest, never that it IS stale',
     /may not be the latest/i.test(n));
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // ALL THREE CONTENT BRANCHES renderProject can take — and each fixture is
   // checked for having actually REACHED the branch it is named after. The
   // first draft of this block reused a fixture whose projectRead carried no
@@ -4782,7 +4814,7 @@ try {
     classAt('<div class="a mem-save b">', 'mem-save') === 5
     && classAt('<div class="mem-saved">', 'mem-save') === -1);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // The unlisted note: the store's own sentence, echoed rather than
   // paraphrased, and the empty-project advice that changes with it.
   const s = { ...hostileState, staleWrite: false, detail: null,
@@ -4864,7 +4896,7 @@ function makeReloader(stateObj, responder) {
 // `state.detail` is never null and no render happens before the answer. The
 // browser measurement (scrollTop unchanged, scrollHeight never dipping) is
 // this claim's other half and is taken in the browser pass.
-try {
+try { blockStart();
   const before = { scope: 'main', machine: 'boxa', machines: [],
     current: { present: true, text: 'x' },
     journal: { returned: 10, total: 40, totalUnknown: false, entries: [] } };
@@ -4928,7 +4960,7 @@ try {
     + 'the ONE case that is not a switch', without.seen[0] === 'BLANK');
 } catch (e) { blockCrashed(e); }
 
-try {
+try { blockStart();
   // Three scopes; the user is on the MIDDLE one, having DELIBERATELY picked a
   // machine from the picker. `state.machine` non-null is what "deliberately"
   // means — it is written by exactly one place, the machine picker's handler.
@@ -4960,7 +4992,7 @@ try {
   ok('the marks moved forward', s.detailFetchedAt > 1_000_000);
   eq('loading finished', s.detailLoading, false);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // ── THE REPORTED BUG. An AUTO-RESOLVED machine is not a CHOICE. ─────────
   //
   // Reported: the Agent-memory view sat open showing state from four hours
@@ -5011,7 +5043,7 @@ try {
   eq('...and nothing was pinned as a side effect, so the next Reload is free too', s.machine, null);
   eq('the stale offer is withdrawn — and this time it was honestly satisfied', s.staleWrite, false);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // The scope genuinely disappeared: fall back to the freshest, which is what
   // selectProject would have chosen anyway. Documented behaviour.
   //
@@ -5038,7 +5070,7 @@ try {
   eq('...while recording NO choice, so the next Reload re-resolves to the newest '
     + 'copy rather than pinning one nobody picked (v3.34.0)', s.machine, null);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // A project whose state vanished entirely: say so, do not paint a scope
   // label over a document that was never read.
   const s = liveState();
@@ -5049,7 +5081,7 @@ try {
   eq('...and the machine', s.machine, null);
   eq('...and stops loading', s.detailLoading, false);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // A remount mid-flight abandons the result.
   const s = liveState();
   const before = s.detail;
@@ -5075,7 +5107,7 @@ eq('reloadActive is reachable from the UI exactly where it should be — the Rel
 // needs a real DOM, so this checks the expression rather than executing it.
 // It is scoped to the two functions by name, so a copy under a third name is
 // invisible to it — stated rather than implied away.
-try {
+try { blockStart();
   const reloadSrc = extractFunction(viewSrc, 'reloadActive', 'memory.js');
   ok('RELOAD honours only a DELIBERATE choice: it reads state.machine…',
     /const\s+wantMachine\s*=\s*state\.machine\s*;/.test(reloadSrc), reloadSrc.slice(0, 200));
@@ -5099,7 +5131,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
 // lifted from live source and RUN; nothing here reads a source string.
 
 // ── 16a. Identity is the PAIR, never the project name alone ──────────────
-try {
+try { blockStart();
   const idApi = new Function('state',
     extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
@@ -5115,7 +5147,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── 16b. Which project opens on arrival ──────────────────────────────────
-try {
+try { blockStart();
   const pick = new Function(extractFunction(viewSrc, 'initialPick', 'memory.js') +
     '\nreturn initialPick;')();
 
@@ -5142,7 +5174,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── 16c. localStorage is a convenience that must never break the screen ──
-try {
+try { blockStart();
   // The storage key is READ OFF LIVE SOURCE, not retyped: a copy here would
   // be a second name for one thing, and the pair would keep passing while the
   // shipped view wrote to a key nothing read back.
@@ -5207,7 +5239,7 @@ try {
 // SAME CONTRACT AS THE LAST-PROJECT MAP: this is a convenience, so storage
 // that refuses must make the app FORGET, never break. Everything below drives
 // the SHIPPED `readRememberedFolds` against hostile stores.
-try {
+try { blockStart();
   const KEY = liftConst('FOLDS_KEY');
   const FOLD_KEYS = liftConst('FOLD_KEYS');
   ok('the folds key was lifted from live source (not vacuous)',
@@ -5301,7 +5333,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── 16d. The rail groups Active / Idle (v3.74.0; by domain before) ─────────
-try {
+try { blockStart();
   const g = makeRenderers({}).renderProjectGroups;
   const H = 3600;
   const rows = [
@@ -5428,7 +5460,7 @@ try {
 // a mount that has ended is dropped, and a refusal leaves the field null
 // rather than empty (empty would mean "this install has no domains", which
 // the picker would then render as a truthful-looking lie).
-try {
+try { blockStart();
   const mk = (stateObj, fetchImpl, mounted = true) => new Function(
     'state', 'fetch', 'isCurrentMount', 'render', 'domainListInFlight',
     'let __flight = domainListInFlight;\n'
@@ -5497,7 +5529,7 @@ try {
 // So the assertions below pin the NESTING (§7's ancestry walk) rather than the
 // absence of a <details>, plus the two facts the closed summary has to carry
 // for the fold to be usable at all: the age and the size.
-try {
+try { blockStart();
   // PHASE 2 (Projects, 2026-11-27): `renderBrief` — the brief's fold, its
   // pencil and its summary line — is GONE with the five-step page; the brief
   // is a Starting kit row now (Edit opens THIS editor in the tab, pinned in
@@ -5861,7 +5893,7 @@ try {
 // EXECUTED on both sides through the real `memStep`, not compared as source
 // strings: a source pin would keep passing if one of them stopped REACHING
 // the page at all.
-try {
+try { blockStart();
   const st = {
     activeDomain: 'acme', activeProject: 'alpha', scope: 'main', machine: 'boxa',
     detailLoading: false, detail: null, staleWrite: false, journalLimit: 10, openFolds: {},
@@ -5939,7 +5971,7 @@ try {
 // A handler is the one thing a markup assertion cannot see. The keydown
 // listener wire() binds on the textarea is lifted with wire() itself and driven
 // with fake events, so "Cmd+S saves" is a measurement rather than a promise.
-try {
+try { blockStart();
   const calls = { save: 0, render: 0, prevented: 0 };
   const el = {
     _keydown: null,
@@ -6015,7 +6047,7 @@ try {
 // SHIPPED handler, because this is a handler and no markup assertion can see
 // it — and then through the SHIPPED `renderBrief`, so the claim is that the
 // fold really comes back open rather than that a field was set.
-try {
+try { blockStart();
   const store = {};
   const btn = { _click: null, addEventListener(t, fn) { if (t === 'click') this._click = fn; } };
   const st = {
@@ -6071,7 +6103,7 @@ try {
     store[key], '{"brief":true}');
 } catch (e) { blockCrashed(e); }
 // ── 16f. The brief write itself ──────────────────────────────────────────
-try {
+try { blockStart();
   function makeSaver(stateObj, responder) {
     const calls = [];
     let mounted = true;
@@ -6179,7 +6211,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
 //     churns focus. So the tick is executed here against a render SPY.
 
 // ── 18a · TIMER DISCIPLINE, over two full mount/teardown cycles ──────────
-try {
+try { blockStart();
   const m = mountView();
   const teardown = m.onEnter(11);
   eq('mount: the age clock is armed exactly once', m.log.intervalsArmed.length, 1);
@@ -6198,7 +6230,7 @@ try {
   eq('teardown twice clears once — the handle is nulled, so a double teardown is not a double clear',
     m.log.intervalsCleared.length, 1);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // THE BALANCE, which is the property that actually matters: two mounts and
   // two teardowns must leave nothing running. This is the assertion that reds
   // when somebody removes the clearInterval, and the one that reds when
@@ -6211,7 +6243,7 @@ try {
   eq('...leaving nothing running', new Set(m.log.intervalsArmed.map((x) => x.id)).size
     - new Set(m.log.intervalsCleared).size, 0);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // AN ENGINE WITH NO setInterval. The guard in onEnter is `typeof setInterval
   // === 'function'`, and an unguarded arm would be a TypeError that kills the
   // whole mount — no list, no error card, a blank screen.
@@ -6224,7 +6256,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── 18b · THE TICK WRITES TEXT AND NEVER RENDERS ────────────────────
-try {
+try { blockStart();
   const renders = [];
   const mkNode = (at, text) => ({
     _at: at,
@@ -6284,7 +6316,7 @@ try {
 // and the table's clock silently freezes at whatever the last render painted —
 // which is the exact defect (a figure that has quietly stopped being true)
 // that tickAges exists for. Measured: it was green before this was written.
-try {
+try { blockStart();
   const NOW = Date.parse('2026-09-17T12:00:00.000Z');
   const mk = (at, words) => {
     const inner = { textContent: words, writes: 0 };
@@ -6341,7 +6373,7 @@ try {
     + 'fallback would delete the visually-hidden stamp beside the words',
     bare.writes, 0);
 } catch (e) { blockCrashed(e); }
-try {
+try { blockStart();
   // NO DOM AT ALL. The tick is armed by onEnter and can outlive a document in
   // a headless engine; it must return rather than throw.
   const box = new Function('document', 'formatAge',
@@ -6359,7 +6391,7 @@ try {
 // poll repaints whenever the reading ages into a new band, so a user reading
 // "How this works" could have it shut under them. v3.53.1 fixed the same shape
 // on Providers & keys and recorded it as UNFIXED here.
-try {
+try { blockStart();
   const mkInfoRig = ({ expandedBefore = [], presentAfter = [], panels = true } = {}) => {
     const buttons = new Map();
     const panelEls = new Map();
@@ -6466,7 +6498,7 @@ try {
 // and what replaces them pins the facts that had to survive the move: the
 // document, the Saved reading, the live clock, the badges, the scope and the
 // machine, and the way back to the row.
-try {
+try { blockStart();
   const now = Date.now();
   const st = (over = {}) => ({
     activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
@@ -6609,7 +6641,7 @@ try {
 //
 // Mutation that reds them: make `renderBrief` emit ` open` when `!state.detail`
 // (the v3.54.0 rule, verbatim) — the mid-read frame goes open and stays open.
-try {
+try { blockStart();
   const midRead = {
     activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
     detailLoading: true, detail: null, staleWrite: false, journalLimit: 10, openFolds: {},
@@ -6713,7 +6745,7 @@ try {
 // binds, against a fake document that knows only the elements the table emits.
 // A markup assertion cannot see either of them: one is an `openReader` call and
 // the other is an `insertAdjacentHTML` into a live <tbody>.
-try {
+try { blockStart();
   const now = Date.now();
   const iso = (secs) => new Date(now - secs * 1000).toISOString();
   const scopes = Array.from({ length: 8 }, (_, i) => ({
@@ -6837,6 +6869,12 @@ try {
   }
 
   // ── A ROW PRESS OPENS THE READER ────────────────────────────────────────
+  // Re-audit 2 item 8 (v4.3.0 final fix round): the reader's PATH chip
+  // (`slug`, state/…/current.md) is Pro's; Simple names the agent, the
+  // computer and the age instead. These pins read which pair opened by its
+  // path, so they run with Pro on (a free `isPro` in the lifted code resolves
+  // on globalThis); the Simple arm is pinned right after them.
+  globalThis.isPro = () => true;
   {
     const r = rig();
     ok('SETUP: the row\'s click handler was bound', typeof r.rowButtons[0]._click === 'function');
@@ -6948,6 +6986,18 @@ try {
     eq('...on that row\'s own handoff', r3.calls.reader[0] && r3.calls.reader[0].slug,
       'state/lumina/ws-00/boxa/current.md');
   }
+  // …and with Pro off the same press opens a reader with NO file path.
+  globalThis.isPro = () => false;
+  {
+    const r = rig();
+    r.rowButtons[0]._click();
+    await new Promise((res) => setImmediate(res));
+    const paid = r.calls.reader[1] || {};
+    ok('Simple: the note reader shows no state/… path (re-audit 2 item 8), on the loader or the document',
+      r.calls.reader.length === 2 && r.calls.reader[0].slug === '' && paid.slug === '' && !/state\//.test((paid.tags || []).join(' ')),
+      JSON.stringify(r.calls.reader.map((x) => x.slug)));
+  }
+  delete globalThis.isPro;
 
   // ── "SHOW N MORE" — DELETED (phase 2, 2026-11-27) ──────────────────────
   // The work-stream table's windowed footer (`wsMoreHtml`, `#mem-ws-more`) is
@@ -7143,7 +7193,7 @@ try {
 // `bindWorkStreamRows` binds, and the poll through `refreshIndex`. The route's
 // own `scope=latest` is NOT touched by any of this and is asserted elsewhere;
 // this is the view choosing from a list it already holds.
-try {
+try { blockStart();
   const nowMs = Date.now();
   const isoAt = (secs) => new Date(nowMs - secs * 1000).toISOString();
   const AGES = [14 * 86400, 7 * 86400, 3 * 86400, 2 * 86400, 86400, 3 * 3600, 1800, 300];
@@ -7362,7 +7412,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── 18e · THE PAGE: an ⓘ in the header, and no explainer card ───────────
-try {
+try { blockStart();
   const src = stripComments(readFileSync(join(NEXT, 'views/memory.js'), 'utf8'));
   ok('renderMain builds its header with an `info` panel — "How this works" is the mark now',
     callSiteCount(src, 'renderViewHeader', { within: 'renderMain' }) > 0
@@ -7397,7 +7447,7 @@ try {
 // saved after this one". Both are derived from data every read already
 // returned — `scopes[].headline` was fetched on every request and rendered
 // nowhere at all.
-try {
+try { blockStart();
   const nowMs = Date.now();
   const at = (secs) => new Date(nowMs - secs * 1000).toISOString();
 
@@ -7576,7 +7626,7 @@ try {
 // Every block, the table and both documents end at one right edge. A help
 // panel capped at 68ch beside them was the last of the four widths v3.54.0
 // began removing, and `panelWide` is the opt-in that closes it.
-try {
+try { blockStart();
   const src = stripComments(readFileSync(join(NEXT, 'views/memory.js'), 'utf8'));
   ok('the centre header asks for the wide panel',
     /renderViewHeader\(\{[\s\S]{0,400}panelWide: true/.test(src), 'panelWide is not passed');
@@ -7609,7 +7659,7 @@ try {
 //
 // ENFORCED OVER THE RENDERED PAGE, not over the call sites: a lede passed as a
 // composed fragment is still a lede when it reaches the reader.
-try {
+try { blockStart();
   const nowIso = new Date().toISOString();
   const full = {
     activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
@@ -7784,7 +7834,7 @@ try {
 // caveats — and this view must not restate the block rhythm itself, or there
 // would be two declarations of one gap, which is the drift the foundation
 // removed.
-try {
+try { blockStart();
   const css = viewCss.replace(/\/\*[\s\S]*?\*\//g, '');
   ok('the status block stacks its notices in a column with its OWN gap',
     /\.mem-status-stack \{[^}]*display:\s*flex[^}]*flex-direction:\s*column[^}]*gap:\s*var\(--space-5\)/
@@ -7824,7 +7874,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── 18f · memory.css: one column, one rhythm ──────────────────────
-try {
+try { blockStart();
   const css = viewCss.replace(/\/\*[\s\S]*?\*\//g, '');
   const ruleOf = (sel) => {
     const i = css.indexOf(sel + ' {');
@@ -7962,7 +8012,7 @@ const fndRead = (payload) => ({
 });
 
 // ── §21a — the facts, derived ONCE for three consumers ──────────────────
-try {
+try { blockStart();
   const F = makeRenderers({});
   const facts = F.foundationsFacts(fndRead(fndPayload([
     fndDoc(), fndDoc({ slug: 'decisions.md', freshness: 'stale' }),
@@ -8005,7 +8055,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── §21b — the ONE word, worst first ────────────────────────────────────
-try {
+try { blockStart();
   const F = makeRenderers({});
   const w = (docs, over) => F.foundationsWord(F.foundationsFacts(fndRead(fndPayload(docs, over))));
   eq('a manifest that will not parse outranks every other reading — every figure '
@@ -8039,7 +8089,7 @@ try {
 // Three findings from production, and each of them can be undone by ONE edit
 // with everything else still green — which is why each has a guard of its own
 // rather than riding on the block rendering at all.
-try {
+try { blockStart();
   const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {} });
   const block = (docs, over) => F.renderFoundations(fndRead(fndPayload(docs, over)));
 
@@ -8221,7 +8271,7 @@ try {
 // The primitive is scripts/test-next-monitor-kit.js §8's. What is asserted
 // HERE is the two things only this view can get wrong: WHICH DENOMINATOR each
 // placement uses, and WHERE a bar is allowed to appear.
-try {
+try { blockStart();
   const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
     domainList: ['acme'] });
   const pct = (h, after) => {
@@ -8344,7 +8394,7 @@ try {
 
 // ── §21b2 — the SUMMARY LINE: four clauses, and three readings of zero ──
 // (v3.61.0, P1-11 + P2-3)
-try {
+try { blockStart();
   const F = makeRenderers({});
   const meta = (docs, over) =>
     F.foundationsSummaryMeta(F.foundationsFacts(fndRead(fndPayload(docs, over))));
@@ -8397,7 +8447,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── §21c — THE HEAD ROW AND THE SOURCES STRIP (P1-4; v3.69.0 §4) ───────
-try {
+try { blockStart();
   const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {} });
   const block = (docs, over, st) => makeRenderers({ activeDomain: 'acme', activeProject: 'lumina',
     openFolds: {}, ...(st || {}) }).renderFoundations(fndRead(fndPayload(docs, over)));
@@ -8467,7 +8517,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── §21c2 — "Copy the drafting request": offered, withheld, absent (P2-8) ──
-try {
+try { blockStart();
   const F = makeRenderers({});
   const ask = (docs, over, ro) =>
     F.foundationsDraftAsk(F.foundationsFacts(fndRead(fndPayload(docs, over))), ro === true);
@@ -8555,7 +8605,7 @@ try {
 //
 // The force is a transient now (`state.fndForceOpen`), it is not a FOLD_KEYS
 // name so it cannot be serialised, and `open` reads from exactly two places.
-try {
+try { blockStart();
   const docs = [fndDoc(), fndDoc({ slug: 'decisions.md', title: 'Decisions', role: 'decisions' })];
   const paint = (over) => makeRenderers({
     activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null, ...over,
@@ -8652,7 +8702,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── §21d — the block body: closed, summarised, and warnings outside it ──
-try {
+try { blockStart();
   const st = { activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null };
   const F = makeRenderers(st);
   const html = F.renderFoundations(fndRead(fndPayload([
@@ -8957,7 +9007,7 @@ try {
 // owner. The row, the fold's word (which the overview tile and the fold meta
 // both read) and the reader say "copied"; a written one keeps "written by
 // you"; an older manifest with no `copiedFrom` reads as written, unchanged.
-try {
+try { blockStart();
   const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: { foundations: true }, fnd: null });
   const cur = (over) => fndDoc({ freshness: 'n/a', commit: null, source: { kind: 'curator', path: null },
     authoredBy: { kind: 'human' }, ...over });
@@ -8983,7 +9033,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── §21d2 — a SKELETON is a prompt, and the block says so (v3.61.0) ─────
-try {
+try { blockStart();
   const st = { activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null };
   const F = makeRenderers(st);
   const skel = (over) => fndDoc({
@@ -9242,7 +9292,7 @@ try {
 // chat). One confirmation cannot describe both — an owner who pressed the
 // drafting ask and read "paste it into CLAUDE.md" has been told the wrong
 // thing about the thing they are holding.
-try {
+try { blockStart();
   const st = { activeDomain: 'acme', activeProject: 'lumina' };
   const F = makeRenderers(st);
   const out = (over) => {
@@ -9283,7 +9333,7 @@ try {
 // (2) On his own project the sentence was FALSE: the documents came over the
 // GitHub arm, which records no local folder (`repo.root: null`) — so every row
 // read "unreachable" on the very machine that holds the checkout.
-try {
+try { blockStart();
   const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: { foundations: true } });
   const GH = { repo: { root: null, remote: { owner: 'talirezun', repo: 'the-curator', ref: null, path: null },
     lastRefreshAt: '2026-09-24T06:34:07.388Z', lastRefreshCommit: 'f796b6d6be2e1acc' } };
@@ -9370,7 +9420,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── §21e — the control's three states, painted ──────────────────────────
-try {
+try { blockStart();
   const base = { activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null };
   // v3.69.0: the control is the SOURCE LINE's Refresh — one per group.
   const offered = makeRenderers(base).renderFoundations(fndRead(fndPayload([fndDoc()])));
@@ -9451,7 +9501,7 @@ try {
 // four-line status block was noise. A strip cell is not a line in a block — it
 // is one of three readings the page exists to give — so it speaks in every
 // state, and says which state it is in.
-try {
+try { blockStart();
   const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', projects: [] });
   // THE MARK RIDES INSIDE THE VALUE (that is what `markHtml` is), so a
   // non-greedy `</span>` stops at the DOT's closing tag rather than the
@@ -9523,7 +9573,7 @@ try {
 // request per domain per paint (invisible, just slower), a reply for a mount
 // that has ended, a 404 told as a read failure, and a failure painted as a
 // blank rather than as a disclosure. Driven against a fake fetch.
-try {
+try { blockStart();
   const mk = (responder) => {
     const st = { activeDomain: 'acme', activeProject: 'lumina', knowledge: new Map() };
     const calls = { urls: [], renders: 0 };
@@ -9890,7 +9940,7 @@ try {
 // The listener body is lifted out of `wire()` by brace-match on its own
 // marker and driven against a recording document — the shape §21f2 already
 // uses for the chat door.
-try {
+try { blockStart();
   const liftJump = (src) => {
     const marker = "document.querySelectorAll('[data-ov-jump]').forEach((btn) => {";
     const idx = src.indexOf(marker);
@@ -9957,7 +10007,7 @@ try {
 // EVERY REFUSAL BECOMES A SENTENCE, and two of them carry data the user needs
 // — the cap, and which domain was not recognised — so those are read off the
 // payload rather than paraphrased into a guess.
-try {
+try { blockStart();
   const mk = (responder) => {
     const st = { activeDomain: 'acme', activeProject: 'lumina',
       projectRead: { knowledgeDomains: ['acme'], knowledgeDomainsDefaulted: false },
@@ -10169,7 +10219,7 @@ function realListbox() {
   return { api, doc, plant, pick, created };
 }
 
-try {
+try { blockStart();
   const mk = (over) => {
     const st = { activeDomain: 'acme', activeProject: 'lumina', knowledgeSaving: false,
       domainList: ['acme', 'research', 'business'],
@@ -10296,7 +10346,7 @@ try {
 // that is the default, Remove sent `null`, the store answered "back to the
 // default", and the same row repainted — a press that looked dead. Three
 // states, each rendered by the real `renderKnowledge`.
-try {
+try { blockStart();
   const data = { pageCount: 3, pageCounts: {}, lastIngestDate: '2026-09-16' };
   const R = (list, defaulted) => makeRenderers({
     activeDomain: 'acme', activeProject: 'l', openFolds: {}, domainList: ['acme', 'research', 'business'],
@@ -10344,7 +10394,7 @@ try {
 // counter-rule for a class that sets none would be cargo. The same shape
 // scripts/test-next-foundations-editor.js §14 uses one file over, pointed at
 // this view's own markup.
-try {
+try { blockStart();
   const SHEETS = ['views/memory.css', 'shared/text.css', 'shared/foundations-init.css',
     'shared/freshness.css', 'shell.css'];
   const css = SHEETS.map((f) => { try { return readFileSync(join(NEXT, f), 'utf8'); } catch { return ''; } })
@@ -10415,7 +10465,7 @@ try {
 // Two rules, and the second is the one that would rot: the STEP and the STRIP
 // must say the same word, and the retired noun must not creep back into a
 // heading or a label.
-try {
+try { blockStart();
   const st = {
     activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10,
     projects: [], detail: null, detailLoading: false, wsWindow: WS_WINDOW_SRC,
@@ -10601,7 +10651,7 @@ try {
 // nobody could take is the dashed unknown ring and the words that say so,
 // NEVER age zero — and it is the rule this view exists to keep, because "am I
 // saved?" is the question the strip replaced a whole block to answer.
-try {
+try { blockStart();
   const F = (over) => makeRenderers({
     activeDomain: 'acme', activeProject: 'lumina', projects: [], openFolds: {},
     wsWindow: WS_WINDOW_SRC, ...over });
@@ -10772,7 +10822,7 @@ try {
 // DRIVEN THROUGH THE COMPOSED PAGE, over both arms of `state.openFolds`, so
 // what is pinned is what a user is SERVED rather than what a renderer was
 // asked for.
-try {
+try { blockStart();
   const stFor = (openFolds) => ({
     activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
     detailLoading: false, staleWrite: false, journalLimit: 10, openFolds, projects: [],
@@ -10844,7 +10894,7 @@ try {
 // §8b uses: `screenSignature` may name no collaborator outside it, because a
 // free identifier there is a CRASH rather than a failing assertion (the
 // v3.11.0 shape). That property is asserted below too.
-try {
+try { blockStart();
   const SIG = ['formatAge', 'effectiveSave', 'workStreamOrder', 'wsShownCount', 'newestPair',
     'projectMetaLine', 'screenSignature'];
   const sigOf = (st) => new Function('state', 'WS_WINDOW',
@@ -10945,7 +10995,7 @@ try {
 // the project budget (200 KB, what may be STORED) and the session budget
 // (120 KB, what an agent RECEIVES) — and warning about the wrong one names a
 // figure nobody can act on.
-try {
+try { blockStart();
   const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null });
   const big = (kb, over) => fndDoc({ bytes: kb * 1024, ...over });
 
@@ -11239,7 +11289,7 @@ try {
 // timestamp, byte count or work-stream moving. A mark that could not see it
 // would leave the block painting "fresh" over documents that had stopped
 // being it.
-try {
+try { blockStart();
   const mk = (over, extra) => ({
     activeDomain: 'acme', activeProject: 'lumina', staleWrite: false, indexError: null,
     scope: null, machine: null, projects: [], detail: null, fnd: null, openFolds: {},
@@ -11272,7 +11322,7 @@ try {
 // `foundationReaderContent` chain against a fake document and a fake fetch. The
 // no-repaint property is only reachable because every row carries a stable id
 // derived from its slug, so there is no "which row is open" state to write.
-try {
+try { blockStart();
   const calls = { reader: [], render: 0, urls: [] };
   const btn = { dataset: { fndSlug: 'architecture.md' }, _click: null,
     addEventListener(t, fn) { if (t === 'click') this._click = fn; } };
@@ -11445,7 +11495,7 @@ try {
 // a computer OR from GitHub … choose a folder, select files from it, drop them
 // in, that's it." One panel per door, one checklist, one primary, one reason
 // line — and the token row keeps every v3.65.2/.3 property it had.
-try {
+try { blockStart();
   const panel = (door, recOver, docs, payloadOver) => {
     const facts = makeRenderers({}).foundationsFacts(fndRead(fndPayload(docs || [], payloadOver)));
     const info = doorsFor(facts, {})[door];
@@ -11540,7 +11590,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── §21m2 — THE TOKEN FACTS, READ ONCE PER OPEN (v3.65.2's reads, v3.68.0's panel)
-try {
+try { blockStart();
   const mk = (responses) => {
     const calls = { urls: [], render: 0 };
     const st = {};
@@ -11596,7 +11646,7 @@ try {
 // behind it. The shape refused here is the obvious one — paint the outcome,
 // then reload and paint again, which puts a note saying the documents changed
 // over the figures that have not been re-read yet.
-try {
+try { blockStart();
   const mkRig = (responder) => {
     const calls = { render: 0, urls: [], forgot: [], bodies: [] };
     const st = { activeDomain: 'acme', activeProject: 'lumina', fnd: null, projectRead: null };
@@ -11703,7 +11753,7 @@ try {
 // ── §21k2 — THE DELETE CONFIRMATION, FROM THE ROUTE'S OWN ANSWER (v3.69.0) ──
 // A toast (an outcome of the owner's own press), and its lines are the
 // route's §5.4 fields — never a guess about what was kept.
-try {
+try { blockStart();
   const T = new Function(extractFunction(viewSrc, 'fndDeletedToast', 'memory.js')
     + '\nreturn fndDeletedToast;')();
   const gh = T('architecture.md', { ok: true, origin: 'github', sourceKept: true,
@@ -11719,7 +11769,7 @@ try {
 } catch (e) { blockCrashed(e); }
 
 // ── §21j — hostile text, through the real renderers ─────────────────────
-try {
+try { blockStart();
   const F = makeRenderers({ activeDomain: XSS, activeProject: XSS, openFolds: {}, fnd: null });
   const hostile = F.renderFoundations(fndRead(fndPayload([fndDoc({
     slug: XSS, title: XSS, role: ATTR, commit: XSS,
@@ -11749,7 +11799,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
 // Everything here drives the SHIPPED functions (lifted by `v367Lift`, or by
 // name below) against fixtures shaped like the store's own answers
 // (REPORT-v367-store §1's example, REPORT-v367-jobs §0.2's runsOn objects).
-try {
+try { blockStart();
   // ── The route's session-start answer, v3.70.0's shape (REPORT-p2) ─────
   // The presets are DERIVED from the store's own ladder (`ws.READING_BUDGET_
   // PRESETS`), so a fixture that drifted from the store would red §25b rather
@@ -13701,7 +13751,7 @@ for (const n of ['openConnectFlow', 'connectModel', 'plainOf', 'paintConnect', '
 
 ok('the census enumerated this view\'s top-level functions FROM DISK',
   TOP_LEVEL_FNS.length >= 30, 'found ' + TOP_LEVEL_FNS.length);
-try {
+try { blockStart();
   const unaccounted = TOP_LEVEL_FNS.filter((n) => !EXECUTED.has(n) && !(n in NOT_EXECUTED));
   ok('every top-level function is either EXECUTED here or listed with a reason it is not',
     unaccounted.length === 0, 'unaccounted for: ' + JSON.stringify(unaccounted));
@@ -13762,7 +13812,7 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
 // sit behind a chevron. So the explanations fold and the loud lines do not,
 // and a future tidy-up that swept them into the row would be removing a
 // warning from the screen while making the screen more uniform.
-try {
+try { blockStart();
   const baseSt = (over) => ({
     activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
     detailLoading: false, staleWrite: false, journalLimit: 10, openFolds: {}, projects: [],
@@ -13968,7 +14018,7 @@ try {
 // makeRenderers). What is pinned is what only this view can get wrong: WHICH
 // denominator, WHERE it comes from, WHEN a bar may turn danger, and that a
 // warning is never behind the chevron.
-try {
+try { blockStart();
   const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
     domainList: ['acme'] });
   const KB = 1024;
@@ -14200,7 +14250,7 @@ try {
 // every panel body must be BYTE-EQUAL to the kit's render of the `context.*`
 // key it names. Then the source: nothing on this view can compose a panel any
 // other way (no renderInfoMark call, memStep takes a KEY and ignores text).
-try {
+try { blockStart();
   const CONTEXT_KEYS = Object.keys(EXPLAINERS).filter((k) => k.startsWith('context.')).sort();
   // The one function the guard is: a list of every panel that is NOT a
   // Context explainer, each with its reason. Empty is the pass.
@@ -14300,7 +14350,7 @@ try {
 // ═════════════════════════════════════════════════════════════════════════
 section('§31 — v3.76.0 truth fixes: ages from stamps, a clock that reaches every age, the brief\'s own time, tools from the journal, one tool name');
 // ═════════════════════════════════════════════════════════════════════════
-try {
+try { blockStart();
   const AGE = await import('../src/public/next/shared/age.js');
   const TICKER = await import('../src/public/next/shared/age-ticker.js');
   // The pure pieces, lifted off LIVE SOURCE with the REAL age scale injected.
@@ -14464,7 +14514,13 @@ try {
 // v4.3.0 fix round (audit M4): +46, the pins that passed only on a gone
 // renderer's '' (each by name; `vacuousReason` in the json says where the
 // behaviours that still exist are pinned now).
-eq('the retired list is phase 2\'s 387 (the five-step page\'s markup) + the 46 vacuous pins the v4.3.0 audit found', RETIRED.size, 433);
+eq('the retired list is phase 2\'s 387 (the five-step page\'s markup) + the 46 vacuous pins the v4.3.0 audit found + the 99 the lasting rule found (re-audit 2 item 5)', RETIRED.size, 532);
+// Re-audit 2 item 5: an `independent` entry is an exemption BY NAME; one that
+// no longer sits after a gone call (or no longer runs) is stale and fails.
+ok('every `independent` exemption is still needed (it passed after a gone call this run)',
+  [...INDEPENDENT.keys()].every((k) => independentHit.has(k)),
+  [...INDEPENDENT.keys()].filter((k) => !independentHit.has(k)).slice(0, 5).join(' | '));
+ok('...and none of them is also retired', [...INDEPENDENT.keys()].every((k) => !RETIRED.has(k)));
 // A RETIREMENT IS A FAILING PIN OF GONE MARKUP, NOTHING ELSE (builder resume,
 // 2026-11-27). A crash key would hide every assertion after the throw, so it
 // may never be retired; a retired pin that no longer runs, or now passes, is

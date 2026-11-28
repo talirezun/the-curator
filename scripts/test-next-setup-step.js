@@ -489,7 +489,7 @@ section('§13 the explainer');
   '…handoffs and the brief by Sync now; instruction files and the marker by the project’s git; MCP, skills and hooks set up per computer');
   ok(!/ready|can’t check here/.test(JSON.stringify(e.visual)), '…and the marks table is gone from the ⓘ');
   const ov = EXPLAINERS['context.overview'];
-  ok(ov.title === 'History' && /every note an agent saved/.test(ov.lead) && !/jump to its step|Six readings/.test(JSON.stringify(ov)), 'the overview explainer is History\'s now (phase 2): no six readings, no step jumps');
+  ok(ov.title === 'History' && /lists the latest note of each work-stream/.test(ov.lead) && !/every note an agent saved/.test(ov.lead) && !/jump to its step|Six readings/.test(JSON.stringify(ov)), 'the overview explainer is History\'s now (phase 2): no six readings, no step jumps');
 }
 
 

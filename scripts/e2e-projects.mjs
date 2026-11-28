@@ -408,7 +408,8 @@ try {
     /A NEW WORK-STREAM AFTER MOUNT/.test((document.querySelector('.prj-handoff-body') || {}).textContent || '') && !document.querySelector('.prj-handoff-body [aria-busy="true"]')));
   // e2e M7: delete says whose notes, the card is AT the press and in view, Keep it returns focus.
   const delLabel = await page.evaluate(() => (document.querySelector('[data-prj-panel="now"] [data-ws-delete]') || {}).textContent || '');
-  step('the Now card\'s delete says whose notes it deletes', /^Delete .+’s notes…$|^Delete the notes saved as/.test(delLabel), delLabel);
+  // re-audit 2 item 3: it names the NOTES (the work-stream), never one agent.
+  step('the Now card\'s delete names the notes it deletes, never one agent', /^Delete the notes saved as “[^”]+”…$/.test(delLabel) && !/’s notes/.test(delLabel), delLabel);
   await page.evaluate(() => document.querySelector('[data-prj-panel="now"] [data-ws-delete]').click());
   await until('the delete card', () => !!document.querySelector('.mem-wsdel-card') && !document.querySelector('.mem-wsdel-card [disabled]#mem-ws-del-no'), null, 8000);
   await delay(600);
@@ -419,6 +420,8 @@ try {
       && document.activeElement && document.activeElement.id === 'mem-ws-del-input';
   }));
   step('...and shows the name to type as visible text', await page.evaluate(() => !!document.querySelector('.mem-wsdel-card code.mem-wsdel-name')));
+  step('...and says who saved them, by agent and computer', await page.evaluate(() => /^Saved by .+ \(.+\)\.$/.test(((document.querySelector('.mem-wsdel-card .mem-wsdel-savedby') || {}).textContent || '').trim())),
+    await page.evaluate(() => (document.querySelector('.mem-wsdel-card .mem-wsdel-savedby') || {}).textContent || 'none'));
   await click('#mem-ws-del-no');
   await delay(500);
   step('Keep it puts focus back on the Delete press (never body)', await page.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-ws-delete')),

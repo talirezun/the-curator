@@ -107,7 +107,7 @@ export function tabLede(tab) {
 export const CONNECT_PROMISE = 'The Curator sets it up for you where it can; otherwise it shows exactly what to paste.';
 
 /** The one quiet line under the tabs in Simple. */
-export const MORE_IN_PRO_LINE = 'More in Pro: every save in a table, the token budget, your computers.';
+export const MORE_IN_PRO_LINE = 'More in Pro: the latest note of each work-stream, the token budget, your computers.';
 
 const flow = (html, key) => (isStr(html) ? '<div class="prj-flow" data-prj-flow="' + esc(key) + '">' + html + '</div>' : '');
 const h2 = (text, id) => '<h2 class="prj-h"' + (id ? ' id="' + esc(id) + '" tabindex="-1"' : '') + '>' + esc(text) + '</h2>';
@@ -198,7 +198,7 @@ export function nowPanel(m) {
         // is said in the footer's text rather than drawn as a chip.
         + '<span class="prj-foot-facts"><span class="prj-foot-text">Saved · ' + esc(h.footer || '') + '</span></span>'
         + '<button type="button" class="prj-link" data-prj-act="open-note"' + (h.targetId ? ' id="' + esc(h.targetId) + '"' : '') + '>Open the full note ›</button>'
-        + (h.deleteScope ? '<button type="button" class="btn btn-ghost btn-xs" data-ws-delete="' + esc(h.deleteScope) + '">' + esc(wsDeleteLabel(h.deleteWho, h.deleteScope)) + '</button>' : '')
+        + (h.deleteScope ? '<button type="button" class="btn btn-ghost btn-xs" data-ws-delete="' + esc(h.deleteScope) + '">' + esc(wsDeleteLabel(h.deleteScope)) + '</button>' : '')
       + '</footer>'
       + facts,
       'The latest note'));
@@ -306,7 +306,9 @@ export function matrixTable(mx) {
       skills: checkCell(r.skills),
       instructions: checkCell(r.instructions),
       hooks: checkCell(r.hooks),
-      last: { text: r.lastSave ? fmtAge(r.lastSave) : 'never', sort: r.lastSave ? -Date.parse(r.lastSave) : null },
+      // re-audit 2 item 8: "never" beside a 7-day save count was false after a
+      // delete — the usage log still counts the save whose note was deleted.
+      last: { text: r.lastSave ? fmtAge(r.lastSave) : (Number.isInteger(r.saves7) && r.saves7 > 0 ? 'no note kept' : 'never'), sort: r.lastSave ? -Date.parse(r.lastSave) : null },
       saves: r.saves7 === null || r.saves7 === undefined ? { text: '—', sort: null } : r.saves7,
       remove: r.removable ? { html: btn('Remove', { 'data-setup-act': 'remove-tool', 'data-tool': r.tool, 'aria-label': 'Remove ' + r.harness + ' from this computer’s list' }) } : '',
     },
@@ -441,7 +443,7 @@ export function historyPanel(m) {
       computer: r.computer || '—',
       size: { text: r.bytes === null ? '—' : fmtSize(r.bytes), sort: r.bytes },
       del: m.canDelete ? { html: '<button type="button" class="btn btn-ghost btn-xs" data-ws-delete="' + esc(r.scope) + '" aria-label="'
-        + esc(wsDeleteLabel(r.harness, r.scope)) + '">Delete…</button>' } : '',
+        + esc(wsDeleteLabel(r.scope)) + '">Delete…</button>' } : '',
     } })),
   }));
   if (!(m.rows || []).length) out.push('<p class="prj-sub">No note matches.</p>');

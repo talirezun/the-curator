@@ -298,7 +298,7 @@ const STEP_COPY = {
   // that need it instead of with the exemption.
   'api-key': {
     title: 'Add an AI key',
-    todo: 'Needed for ingest and chat. Project context and the bridge work without one.',
+    todo: 'Needed for ingest and chat. Projects and the bridge work without one.',
     done: 'A key is saved, so The Curator can read and write.',
     action: 'Open Settings',
   },

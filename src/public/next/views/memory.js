@@ -3473,7 +3473,16 @@ function captureFocus() {
     if (id && /^[A-Za-z][\w-]*$/.test(id)) sel = '#' + id;
     else if (ga('data-setup-act')) sel = '[data-setup-act=' + q(ga('data-setup-act')) + ']' + (ga('data-tool') ? '[data-tool=' + q(ga('data-tool')) + ']' : '');
     else for (const k of KEYS) { if (ga(k) !== null) { sel = '[' + k + '=' + q(ga(k)) + ']'; break; } }
-    if (sel) state.focusSel = { sel, at: Date.now() };
+    if (sel) state.focusSel = { sel, at: Date.now(), el: active };
+  } else if (state && state.focusSel && state.focusSel.el) {
+    // ── THE USER LEFT IT (re-audit 2 item 2) ──────────────────────────────
+    // Focus is on <body> (or outside this view) while the remembered control
+    // is STILL on the page and enabled: no paint replaced it and no press
+    // disabled it, so the user clicked away. Forget it, or a background paint
+    // within the 10 s would pull focus back to a control the user had left.
+    // A control a press disabled, or one a paint replaced (detached), is kept.
+    const was = state.focusSel.el;
+    if (was.isConnected === true && !was.disabled) state.focusSel = null;
   }
   // THE ID-LESS BRANCH IS GONE WITH THE ELEMENT IT EXISTED FOR. It resolved the
   // shared explainer's <summary>, which carries no id of its own, through
@@ -3490,6 +3499,12 @@ function restoreFocus() {
     const el = document.getElementById(pendingFocusId) ||
       (FOCUS_FALLBACK[pendingFocusId] ? document.querySelector(FOCUS_FALLBACK[pendingFocusId]) : null);
     if (el && typeof el.focus === 'function') {
+      // A control a press DISABLED while it works (Save changes, Delete
+      // permanently: "Saving…", "Deleting…") cannot take focus. Consuming the
+      // target on that paint left focus on <body> when the editor closed
+      // (re-audit 2 item 2): it is kept for the paint that follows, which
+      // finds the fallback.
+      if (el.disabled === true) return;
       pendingFocusId = null;
       // preventScroll: the element is already where the user left it; letting
       // the browser scroll to it would undo the reading position that the
@@ -3498,7 +3513,7 @@ function restoreFocus() {
       // A text field of the add panel (v3.68.0) keeps typing where it left
       // off: a render rebuilt the field, and a caret at 0 would put the next
       // keystroke at the front of the path.
-      if (/^(fadd-|mem-ws-del-input$)/.test(String(el.id || '')) && el.type === 'text' && typeof el.setSelectionRange === 'function') {
+      if (/^(fadd-|mem-ws-del-input$|mem-setup-repo-input$|mem-setup-custom-input$)/.test(String(el.id || '')) && el.type === 'text' && typeof el.setSelectionRange === 'function') {
         try { const n = String(el.value || '').length; el.setSelectionRange(n, n); } catch { /* ignore */ }
       }
       return;
@@ -3517,7 +3532,19 @@ function restoreFocus() {
   if (a && a !== document.body) return;
   let el = null;
   try { el = document.querySelector('#view-root ' + sel + ', #sidebar ' + sel); } catch { el = null; }
-  if (el && typeof el.focus === 'function') { try { el.focus({ preventScroll: true }); } catch { el.focus(); } }
+  // THE PRESSED CONTROL IS GONE WITH ITS OUTCOME (re-audit 2 item 2): Sync
+  // now's notice leaves once the files are sent, Use's field once the folder
+  // is saved. Its replacement is the open tab's own button — the nearest
+  // stable control on the same panel — never <body>.
+  if (!el) { try { el = document.querySelector('#view-root [role="tab"][aria-selected="true"]'); } catch { el = null; } }
+  if (el && typeof el.focus === 'function') {
+    try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+    // The node that holds focus now is the one "left" is judged by.
+    if (document.activeElement === el) fs.el = el;
+    if (el.tagName === 'INPUT' && el.type === 'text' && typeof el.setSelectionRange === 'function') {
+      try { const n = String(el.value || '').length; el.setSelectionRange(n, n); } catch { /* ignore */ }
+    }
+  }
 }
 
 /**
@@ -4031,7 +4058,6 @@ function prjNowModel(read) {
     footer: [who, computer, formatAge(eff.seconds)].filter(Boolean).join(' · '),
     targetId: openIsNewest ? 'mem-ws-active' : undefined,
     deleteScope: readonly || !newest ? null : newest.scope,
-    deleteWho: who || null,
   };
   m.earlier = earlierNotes(scopes, newest, { secondsOf: prjSeconds, machineName: prjMachineName, limit: 4 })
     .map((e) => ({ ...e, targetId: d && !openIsNewest && d.scope === e.scope && (d.machine || null) === e.machine ? 'mem-ws-active' : undefined }));
@@ -4120,7 +4146,9 @@ function prjKitModel(read) {
   const said = [];
   if (owner !== null) said.push('Reading budget: ' + presetName(owner));
   if (!contextWindowIsDefault() && state.ctxSettings) said.push('Window: ' + windowWord(contextWindowNow()));
-  if (harnessNow() !== null) said.push(HARNESS_LABEL + ': ' + tok(harnessNow()) + ' (your estimate)');
+  // re-audit 2 item 8: no "harness" in Simple's words; the picker (Pro's
+  // Budget) keeps HARNESS_LABEL.
+  if (harnessNow() !== null) said.push('Your agent app’s own share: ' + tok(harnessNow()) + ' (your estimate)');
   const notices = [];
   const budgetSentence = foundationsBudgetWarning(facts);
   if (budgetSentence) {
@@ -5580,7 +5608,15 @@ function handoffReaderContent() {
   const savedAge = formatAge(savedWhen.seconds);
   // ABSENT IS NOT ZERO. With no savedAt and no journal entry there is no
   // reading, so nothing renders — never "unknown", never a dash.
-  const savedValue = savedAge || (cur && cur.savedAt) || null;
+  // re-audit 2 item 8: with Pro off a stamp is said as a date a person reads
+  // ("28 Nov 2026, 08:27"), never ISO; Pro keeps the store's stamp.
+  const proReader = typeof isPro === 'function' && isPro();
+  const stampWords = (iso) => {
+    if (proReader) return iso;
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : iso;
+  };
+  const savedValue = savedAge || (cur && cur.savedAt && stampWords(cur.savedAt)) || null;
   // Harness and model come from the journal's newest entry — STRUCTURED
   // fields, never scraped out of the document's prose provenance line.
   const j0 = d.journal && d.journal.entries && d.journal.entries.length ? d.journal.entries[0] : null;
@@ -5615,9 +5651,9 @@ function handoffReaderContent() {
   // promoted the same way, so memory.js's `title=` ratchet SHRINKS from three
   // allowances to one rather than being spent again.
   const exact = savedAge && savedWhen.at
-    ? '<span class="visually-hidden"> (' + escapeHtml(savedWhen.at) +
+    ? '<span class="visually-hidden"> (' + escapeHtml(stampWords(savedWhen.at)) +
       (savedWhen.source === 'filesystem' ? ', file time' : '') +
-      (cur && cur.arrivedAt ? '; arrived here ' + escapeHtml(cur.arrivedAt) : '') + ')</span>'
+      (cur && cur.arrivedAt ? '; arrived here ' + escapeHtml(stampWords(cur.arrivedAt)) : '') + ')</span>'
     : '';
   // NO READING IS STILL A READING TO REPORT, and the rule survives the move.
   // With neither an age nor an author there is no instrument — a readout states
@@ -5667,7 +5703,9 @@ function handoffReaderContent() {
       || 'Nothing has been saved under this handoff on this machine yet.');
 
   return {
-    slug,
+    // re-audit 2 item 8: the file's path is Pro's (the reader's path chip);
+    // Simple names the agent, the computer and the age, never `state/…`.
+    slug: (typeof isPro === 'function' && isPro()) ? slug : '',
     // The handoff's own first line is the best title it has; the scope is the
     // fallback, because a document titled after its file is still addressable.
     title: headline || (scope ? 'Handoff — ' + scope : 'Handoff'),
@@ -8556,6 +8594,17 @@ async function loadFoundationDraft(slug, token) {
   state.fndEdit.title = typeof data.title === 'string' ? data.title : String(slug);
   state.fndEdit.role = FOUNDATION_ROLES.includes(data.role) ? data.role : 'other';
   render(token);
+  // re-audit 2 item 7: the editor opens under the documents table, often
+  // below the fold. Bring it into view and put the caret in its text, the
+  // thing Edit was pressed for (focus was left on the Edit button).
+  if (typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+    const ta = document.getElementById('mem-fnd-text');
+    if (ta && typeof ta.focus === 'function') {
+      const box = typeof ta.closest === 'function' ? (ta.closest('.mem-fnd-editor') || ta) : ta;
+      if (typeof box.scrollIntoView === 'function') box.scrollIntoView({ block: 'start' });
+      try { ta.focus({ preventScroll: true }); } catch { ta.focus(); }
+    }
+  }
 }
 
 /**
@@ -8935,6 +8984,14 @@ function bindFoundationRows(root, token) {
       // THE FORCE IS A TRANSIENT (v3.64.1) — see `fndForceOpen` in freshState.
       state.fndForceOpen = true;
       render(token);
+      // re-audit 2 item 7: the confirm sits under the table; it is scrolled
+      // into view and focus goes to its safe answer, Keep it.
+      const no = typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('mem-fnd-stop-no') : null;
+      if (no && typeof no.focus === 'function') {
+        const bar = typeof no.closest === 'function' ? (no.closest('.mem-fnd-delete-bar') || no) : no;
+        if (typeof bar.scrollIntoView === 'function') bar.scrollIntoView({ block: 'nearest' });
+        try { no.focus({ preventScroll: true }); } catch { no.focus(); }
+      }
     });
   });
   const stopNo = root.getElementById ? root.getElementById('mem-fnd-stop-no') : null;
@@ -9743,10 +9800,10 @@ function sessionNoticesHtml(data, facts, readonly) {
     const total = data.tokens && Number.isInteger(data.tokens.mcp) ? data.tokens.mcp
       : Math.round(((data.bytes && data.bytes.mcp) || 0) / 4);
     const why = sum.reason === 'nothing-read-first'
-      ? 'Nothing is read first, so every budget sends the same — a budget only caps the documents '
-        + 'marked read first. Mark the two or three an agent should never start without as Always read, or '
-        + 'plan them under Documents at start, where the meter previews them first.'
-      : 'Every document marked read first already fits the smallest budget, so a larger one sends '
+      ? 'Nothing is set to Always read, so every budget sends the same — a budget only caps the documents '
+        + 'set to Always read. Set the two or three an agent should never start without to Always read, in '
+        + 'Starting kit › Documents.'
+      : 'Every document set to Always read already fits the smallest budget, so a larger one sends '
         + 'nothing more.';
     out += '<div class="tx-note mem-ss-note mem-ss-same" id="mem-ss-same">' + icon('alertCircle', 13)
       + '<span>' + escapeHtml('Every reading budget sends the same ' + tok(total) + ' tokens right now. '
@@ -9760,7 +9817,7 @@ function sessionNoticesHtml(data, facts, readonly) {
     const text = Number.isInteger(data.costLine.documentTextBytes) ? data.costLine.documentTextBytes : 0;
     const why = (Number.isInteger(rf.count) && rf.count > 0)
       ? ' because no reading budget is set.'
-      : ': nothing is marked read first and no reading budget is set.';
+      : ': nothing is set to Always read and no reading budget is set.';
     const left = Number.isInteger(om.count) && om.count > 0
       ? ' ' + (om.count === 1 ? 'One more document' : om.count.toLocaleString('en-US') + ' more documents')
         + ' did not fit the ' + tok((b.bytes || 0) / 4) + '-token default and ' + (om.count === 1 ? 'is' : 'are')
@@ -9777,7 +9834,7 @@ function sessionNoticesHtml(data, facts, readonly) {
     const n = facts.readFirstCount;
     out += '<div class="tx-note mem-ss-note mem-ss-index-only" id="mem-ss-index-only">' + icon('alertCircle', 13)
       + '<span>' + escapeHtml((n === 1 ? 'One document is' : n.toLocaleString('en-US') + ' documents are')
-        + ' marked read first, but the reading budget is Index only, so agents are handed none of '
+        + ' set to Always read, but the reading budget is Index only, so agents are handed none of '
         + (n === 1 ? 'its' : 'their') + ' text. ' + (n === 1 ? 'It is' : 'They are')
         + ' listed and fetched by name.') + '</span></div>';
   } else if (data.planned === true && b.bytes > 0 && rf.exceeded === true) {
@@ -10090,7 +10147,7 @@ function setupFor() {
 
 
 /** Ask once per project open (and on "Re-check", with `force`). */
-function maybeLoadSetup(token, force = false) {
+function maybeLoadSetup(token, force = false, pressed = false) {
   const domain = state.activeDomain;
   const project = state.activeProject;
   if (!domain || !project || !state.projectRead) return;
@@ -10098,7 +10155,7 @@ function maybeLoadSetup(token, force = false) {
   if (cur && !force) return;
   const key = keyOf(domain, project);
   if (setupInFlight === key && !force) return;
-  loadSetup(domain, project, token).catch((err) => reportAsyncMountFailure(token, err));
+  loadSetup(domain, project, token, pressed).catch((err) => reportAsyncMountFailure(token, err));
 }
 
 /**
@@ -10113,13 +10170,13 @@ function refreshSetupOnWake(token) {
   maybeLoadSetup(token, true);
 }
 
-async function loadSetup(domain, project, token) {
+async function loadSetup(domain, project, token, pressed = false) {
   const key = keyOf(domain, project);
   const seq = ++setupSeq;
   setupInFlight = key;
   const prev = setupFor();
   state.setup = { domain, project, data: prev ? prev.data : null, error: null, loading: true };
-  if (prev) patchSetup(token);
+  if (prev) patchSetup(token, pressed);
   let next;
   try {
     const res = await fetch('/api/setup/projects/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project));
@@ -10135,21 +10192,29 @@ async function loadSetup(domain, project, token) {
   if (state.activeDomain !== domain || state.activeProject !== project) return;
   // A failed RE-check keeps the last good reading, with the error beside it.
   state.setup = { domain, project, data: next.data || (prev && prev.data) || null, error: next.error, loading: false };
-  patchSetup(token);
+  patchSetup(token, pressed);
 }
 
 /** Repaint step 5 and the SETUP tile in place — never the page. */
-function patchSetup(token) {
+function patchSetup(token, pressed = false) {
   // PHASE 2 (Projects): the check feeds the header's sentence, the Agents
   // and Computers tabs and the tiles, so a new reading repaints the page.
   // What is being typed survives it (a focus re-check lands mid-word), and a
   // reader that is open follows the new reading without moving.
+  //
+  // A PAINT A PRESS ASKED FOR IS NEVER DEFERRED (re-audit 2 item 1, v4.3.0
+  // final fix round). `pressed` is true on every path a press started — Use,
+  // Choose…, a refusal under the field, Add, Check again, Sync now, and the
+  // re-check each of them asks for — so its outcome shows AT ONCE, even with
+  // the caret still in the field (a Safari or Firefox click on Use keeps it
+  // there). Only a reading nobody pressed for (the first check, the wake
+  // re-check) is a background paint that waits for the field or menu.
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
   const rIn = document.getElementById('mem-setup-repo-input');
   if (rIn) state.setupRepoDraft = rIn.value;
   const cIn = document.getElementById('mem-setup-custom-input');
   if (cIn) state.setupCustomDraft = cIn.value;
-  render(token, 'idle');
+  render(token, pressed ? undefined : 'idle');
   const s1 = setupFor();
   if (setupReader && isCurrentReader(setupReader.epoch) && s1 && s1.data) {
     if (setupReader.kind === 'file') openSetupFileReader(setupReader.key, token, true);
@@ -10294,7 +10359,7 @@ async function reloadSetupThenOpen(toolId, token) {
   const domain = state.activeDomain;
   const project = state.activeProject;
   if (!domain || !project) return;
-  await loadSetup(domain, project, token);
+  await loadSetup(domain, project, token, true);
   if (!isCurrentMount(token) || !toolId) return;
   const s = setupFor();
   if (!s || !s.data || !(s.data.tools || []).some((t) => t && t.id === toolId)) return;
@@ -10326,7 +10391,7 @@ async function addSetupTool(id, token) {
   const s = setupFor();
   const cur = s && s.data && Array.isArray(s.data.addedTools) ? s.data.addedTools : [];
   state.setupAdding = true;
-  patchSetup(token);
+  patchSetup(token, true);
   const done = await putSetupToolIds([...cur, id], token);
   state.setupAdding = false;
   if (!isCurrentMount(token)) return;
@@ -10350,7 +10415,7 @@ async function removeSetupTool(toolId, token) {
   if (!ok || !isCurrentMount(token)) return;
   if (setupReader && setupReader.kind === 'tool' && setupReader.key === toolId && isCurrentReader(setupReader.epoch)) closeReader();
   showToast({ key: 'setup-tools', tone: 'success', title: 'Removed ' + (t.label || t.id) + ' from this computer’s list',
-    lines: ['Setup no longer checks it here. Nothing was uninstalled; “+ Add an agent harness” brings it back.'] });
+    lines: ['Setup no longer checks it here. Nothing was uninstalled; “+ Connect an agent” brings it back.'] });
   await reloadSetupThenOpen(null, token);
   const add = typeof document !== 'undefined' ? document.getElementById('mem-setup-add') : null;
   if (add && typeof add.focus === 'function') { try { add.focus({ preventScroll: true }); } catch { add.focus(); } }
@@ -10374,7 +10439,7 @@ async function saveCustomTool(change, token, { reload = true } = {}) {
   if (!isCurrentMount(token)) return false;
   if (!res.ok) {
     const why = failText(j, res.status, change.custom ? 'That agent harness was not added.' : 'That agent harness was not removed.');
-    if (change.custom) { state.setupCustomError = why; patchSetup(token); }
+    if (change.custom) { state.setupCustomError = why; patchSetup(token, true); }
     else showToast({ key: 'setup-custom', tone: 'danger', title: 'Could not remove it', lines: errorLines(why) });
     return false;
   }
@@ -10398,13 +10463,13 @@ async function saveSetupRepo(p, token) {
     });
     const j = await res.json().catch(() => ({}));
     if (!isCurrentMount(token)) return;
-    if (!res.ok) { state.setupRepoError = failText(j, res.status, 'The repository folder was not saved.'); patchSetup(token); return; }
+    if (!res.ok) { state.setupRepoError = failText(j, res.status, 'The repository folder was not saved.'); patchSetup(token, true); return; }
     state.setupRepoError = null;
     state.setupEditRepo = false;
     state.setupRepoDraft = null;
     state.setupRepoForceOpen = false;
   } catch (err) { reportAsyncActionFailure(err); return; }
-  maybeLoadSetup(token, true);
+  maybeLoadSetup(token, true, true);
 }
 
 /** Every control step 5 draws (on the page, or in the reader), bound once per node. */
@@ -10418,7 +10483,7 @@ function bindSetup(root, token) {
       if (value === CUSTOM_TOOL_VALUE) {
         state.setupCustomOpen = true;
         state.setupCustomError = null;
-        patchSetup(token);
+        patchSetup(token, true);
         const input = document.getElementById('mem-setup-custom-input');
         if (input && typeof input.focus === 'function') input.focus();
         return;
@@ -10466,7 +10531,7 @@ function bindSetup(root, token) {
       // the reader closes first, so what it opens is on screen.
       if ((act === 'choose-repo' || act === 'change-repo') && typeof document !== 'undefined'
         && document.getElementById('reader-root') && document.getElementById('reader-root').contains(el)) closeReader();
-      if (act === 'check') { maybeLoadSetup(token, true); return; }
+      if (act === 'check') { maybeLoadSetup(token, true, true); return; }
       if (act === 'tool-open') { openSetupToolReader(el.dataset.tool || '', token, el.dataset.step || null); return; }
       if (act === 'file-open') { await openSetupFileReader(el.dataset.name || '', token); return; }
       if (act === 'computer-open') { openSetupComputerReader(el.dataset.computer || '', token); return; }
@@ -10521,7 +10586,13 @@ function bindSetup(root, token) {
       }
       if (act === 'open-sync') { navigate('sync'); return; }
       if (act === 'sync' || act === 'check-github') {
-        el.disabled = true;
+        // re-audit 2 item 2: NOT `disabled` — a disabled button drops focus to
+        // <body> for the whole sync. aria-disabled keeps focus on the press;
+        // a second press while it runs is ignored.
+        const busy = state.setupPressBusy || (state.setupPressBusy = {});
+        if (busy[act]) return;
+        busy[act] = true;
+        el.setAttribute('aria-disabled', 'true');
         try {
           // Two calls, each spelled out: the census in test-next-memory-view.js
           // reads every request init in this view.
@@ -10542,8 +10613,10 @@ function bindSetup(root, token) {
             try { refreshSyncBadge(); } catch { /* the badge re-reads on its own timer */ }
           }
         } catch (err) { reportAsyncActionFailure(err); }
+        busy[act] = false;
+        el.removeAttribute('aria-disabled');
         if (!isCurrentMount(token)) return;
-        maybeLoadSetup(token, true);
+        maybeLoadSetup(token, true, true);
         return;
       }
       if (act === 'add-custom') {
@@ -10551,7 +10624,7 @@ function bindSetup(root, token) {
         const name = input ? input.value.trim() : '';
         state.setupCustomDraft = name;
         const why = customToolNameError(name);
-        if (why) { state.setupCustomError = why; patchSetup(token); return; }
+        if (why) { state.setupCustomError = why; patchSetup(token, true); return; }
         el.disabled = true;
         if (await saveCustomTool({ custom: { name } }, token)) {
           state.setupCustomOpen = false;
@@ -10564,7 +10637,7 @@ function bindSetup(root, token) {
         state.setupCustomOpen = false;
         state.setupCustomDraft = '';
         state.setupCustomError = null;
-        patchSetup(token);
+        patchSetup(token, true);
         return;
       }
       if (act === 'remove-tool') {
@@ -10574,7 +10647,7 @@ function bindSetup(root, token) {
       }
       if (act === 'choose-repo') {
         state.setupRepoForceOpen = true;
-        patchSetup(token);
+        patchSetup(token, true);
         const fold = document.querySelector('[data-mem-fold="setup-repo"]') || document.getElementById('mem-setup-repo-input');
         if (fold && typeof fold.scrollIntoView === 'function') fold.scrollIntoView({ block: 'nearest' });
         const input = document.getElementById('mem-setup-repo-input');
@@ -10584,7 +10657,7 @@ function bindSetup(root, token) {
       if (act === 'change-repo') {
         state.setupEditRepo = true;
         state.setupRepoError = null;
-        patchSetup(token);
+        patchSetup(token, true);
         const input = document.getElementById('mem-setup-repo-input');
         if (input && typeof input.focus === 'function') { try { input.focus({ preventScroll: false }); } catch { input.focus(); } }
         return;
@@ -10593,7 +10666,7 @@ function bindSetup(root, token) {
         state.setupEditRepo = false;
         state.setupRepoError = null;
         state.setupRepoDraft = null;
-        patchSetup(token);
+        patchSetup(token, true);
         return;
       }
       if (act === 'pick-repo') {
@@ -10603,7 +10676,7 @@ function bindSetup(root, token) {
         if (got.ok) { await saveSetupRepo(got.path, token); return; }
         if (got.reason === 'no-dialog') state.setupPickUnavailable = got.message || 'There is no folder picker here — type the folder’s full path instead.';
         else if (got.reason !== 'cancelled') state.setupRepoError = withDetailOf('The folder picker failed: ' + (got.message || 'no answer'), got.message);
-        patchSetup(token);
+        patchSetup(token, true);
         return;
       }
       if (act === 'save-repo' || act === 'use-repo') {
@@ -12009,11 +12082,12 @@ async function openWorkStreamDelete(scope, token) {
   if (!domain || !project || !scope) return;
   // e2e M7: whose notes (the agent that saved this work-stream), and where
   // the press was, so Keep it / Dismiss put focus back on it.
-  const row = ((state.projectRead && state.projectRead.scopes) || []).find((x) => x && x.scope === scope) || null;
-  const who = row ? (row.harnessLabel || row.harness || null) : null;
+  // Re-audit 2 item 3: the card names the notes and, from the preview, who
+  // saved them; `thisWord` is the page's word for this computer.
   const del = {
     domain, project, scope, preview: null, loading: true, loadError: null,
-    confirmText: '', busy: false, error: null, who,
+    confirmText: '', busy: false, error: null,
+    thisWord: typeof thisMachine === 'function' ? 'this ' + thisMachine() : 'this computer',
   };
   state.wsDelete = del;
   state.wsDeleteOutcome = null;
@@ -12108,7 +12182,7 @@ async function runWorkStreamDelete(token) {
     // and tiles (the reload), the Agents list (an agent known only from its
     // saves leaves it; one set up here stays, with its setup state) and the
     // 7-day saves (the capture re-read).
-    maybeLoadSetup(token, true);
+    maybeLoadSetup(token, true, true);
     loadCapture(domain, project, token, { maxAgeMs: 0 }).catch((err) => reportAsyncMountFailure(token, err));
   } else {
     render(token);
@@ -12156,8 +12230,8 @@ async function openWorkStream(scope, machine, token) {
   }
 
   const epoch = openReader({
-    slug: 'state/' + (state.activeProject || '') + '/' + scope
-      + (wanted ? '/' + wanted : '') + '/current.md',
+    slug: (typeof isPro === 'function' && isPro()) ? 'state/' + (state.activeProject || '') + '/' + scope
+      + (wanted ? '/' + wanted : '') + '/current.md' : '',
     title: scope,
     loading: true,
     returnFocusTo: 'mem-ws-active',
@@ -12326,7 +12400,7 @@ function wireProjects(token) {
       if (v === 'check-again') {
         refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
         reloadActive(token).catch((err) => reportAsyncMountFailure(token, err));
-        maybeLoadSetup(token, true);
+        maybeLoadSetup(token, true, true);
       }
     };
     mountListbox(cfg);
@@ -12629,7 +12703,7 @@ async function connectAdd(token) {
   const ok = await putSetupToolIds([...(data.addedTools || []), c.tool], token);
   if (state.connect !== c) return false;
   if (!ok) { c.busy = null; c.error = 'It could not be added to this computer’s list.'; return false; }
-  await loadSetup(state.activeDomain, state.activeProject, token);
+  await loadSetup(state.activeDomain, state.activeProject, token, true);
   if (state.connect !== c) return false;
   c.busy = null;
   return true;
@@ -12674,7 +12748,7 @@ async function connectApply(token) {
   if (r.ok) {
     c.results = { action: c.plan.action, planItems: c.plan.items, items: r.data.results };
     c.plan = null;
-    await loadSetup(state.activeDomain, state.activeProject, token);
+    await loadSetup(state.activeDomain, state.activeProject, token, true);
     if (state.connect !== c) return;
   } else {
     c.error = failureWords(r) + ' Preview again to continue.';

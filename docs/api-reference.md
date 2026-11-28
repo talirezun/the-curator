@@ -4705,7 +4705,7 @@ only in a view is a confirmation every other client skips.
 ### GET /api/memory/:domain/:project/scopes/:scope/delete-preview
 
 **New in v3.75.0.** What [`DELETE …/scopes/:scope`](#delete-apimemorydomainprojectscopesscope)
-would take, read fresh — the Projects page reads it when its delete confirm (**Delete ‹agent›'s notes…**; *Delete handoff* before v4.3.0) opens, so the
+would take, read fresh — the Projects page reads it when its delete confirm (**Delete the notes saved as "‹work-stream›"…**; *Delete handoff* before v4.3.0) opens, so the
 card lists every machine's copy rather than the one row that was pressed. Read-only. `:project` is
 the domain name for the domain's own project.
 

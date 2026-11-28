@@ -56,7 +56,7 @@ const E = {
   'context.overview': {
     label: 'About History',
     title: 'History',
-    lead: '**History** lists every note an agent saved: one row per work-stream and computer, newest first.',
+    lead: '**History** lists the latest note of each work-stream: one row per work-stream and computer, newest first.',
     points: [
       { icon: 'clock', text: 'Times are when the agent saved, or when the file arrived here.' },
       { icon: 'agent', text: '**Agent connections** says not logged when there is no usage log.' },

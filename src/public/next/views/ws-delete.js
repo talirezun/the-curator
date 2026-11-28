@@ -44,6 +44,8 @@ import { formatAge } from '../shared/age.js';
 // plainError; errorDetailHtml prints the technical detail under the sentence
 // (visible, muted, selectable). net.js is DOM-free, so this still imports in Node.
 import { errorDetailHtml } from '../shared/net.js';
+// DOM-free too: the short computer names the rest of the page uses.
+import { shortMachineNames } from '../shared/machine-name.js';
 
 // A byte-for-byte copy of app.js's escapeHtml, for the reason
 // views/chat-list.js carries one: this module must import in plain Node.
@@ -60,16 +62,47 @@ function plural(n, one, many) {
 /** One line: what deleting a work-stream's notes does (e2e M7). */
 export const WS_DELETE_CONSEQUENCE = 'Its latest note and its journal go to The Curator’s trash, from every computer that saved them. Its connection to The Curator is not touched.';
 
-/** Whose notes: "Delete Claude Code’s notes on this project?", by the agent that saved them. */
+/**
+ * THE QUESTION NAMES THE NOTES, NEVER ONE AGENT (re-audit 2 item 3, v4.3.0
+ * final fix round). A work-stream is a SCOPE, and two agents can save into
+ * the same one — Claude Code here and Antigravity on another computer, both
+ * under "main". "Delete Antigravity's notes…" then removed Claude Code's too,
+ * and left Antigravity's own "antigravity" work-stream untouched. So the
+ * press and the card say the work-stream's name, and the card says who
+ * saved into it (`wsDeleteSavedBy`, from the delete preview).
+ */
 export function wsDeleteQuestion(del) {
-  const who = del && typeof del.who === 'string' && del.who.trim() ? del.who.trim() : '';
-  return who ? 'Delete ' + who + '’s notes on this project?' : 'Delete the notes saved as “' + String((del && del.scope) || '') + '”?';
+  return 'Delete the notes saved as “' + String((del && del.scope) || '') + '”?';
 }
 
 /** The press's own words, on the Now card and on a History row. */
-export function wsDeleteLabel(who, scope) {
-  const w = typeof who === 'string' && who.trim() ? who.trim() : '';
-  return w ? 'Delete ' + w + '’s notes…' : 'Delete the notes saved as “' + String(scope || '') + '”…';
+export function wsDeleteLabel(scope) {
+  return 'Delete the notes saved as “' + String(scope || '') + '”…';
+}
+
+/**
+ * WHO SAVED THEM, from the preview's machine copies: "Saved by Claude Code
+ * (this Mac) and Antigravity (studio-mac)." One entry per agent and computer;
+ * a copy with no agent named says "an agent". `thisWord` is the page's word
+ * for this computer ("this Mac"). '' when the preview lists nothing.
+ */
+export function wsDeleteSavedBy(machines, thisWord = 'this computer') {
+  const list = Array.isArray(machines) ? machines.filter((m) => m && typeof m === 'object') : [];
+  const names = shortMachineNames(list.map((m) => m.machine).filter((x) => typeof x === 'string' && x));
+  const seen = new Set();
+  const parts = [];
+  for (const m of list) {
+    const tool = (typeof m.harnessLabel === 'string' && m.harnessLabel.trim()) || (typeof m.harness === 'string' && m.harness.trim()) || 'an agent';
+    const where = m.isThisMachine ? thisWord : (names.get(m.machine) || m.machine || 'another computer');
+    const one = tool + ' (' + where + ')';
+    if (seen.has(one)) continue;
+    seen.add(one);
+    parts.push(one);
+  }
+  if (!parts.length) return '';
+  const joined = parts.length === 1 ? parts[0]
+    : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+  return 'Saved by ' + joined + '.';
 }
 
 /** The ONE predicate: exact, no trim, no case folding. */
@@ -190,13 +223,16 @@ export function wsDeleteCardHtml(del, nowMs = Date.now()) {
     : '';
 
   const can = wsDeleteCanSubmit(del);
+  const savedBy = pv ? wsDeleteSavedBy(machines, typeof del.thisWord === 'string' && del.thisWord ? del.thisWord : 'this computer') : '';
   return (
     '<div class="mem-wsdel-card" role="group" aria-labelledby="mem-ws-del-title" data-ws-del-scope="' +
       escapeHtml(scope) + '">' +
       // v4.3.0 fix round (e2e M7): the question says WHAT goes in plain
-      // words — whose notes — and the consequence in one line; the name to
-      // type is shown as text to copy, never only inside the input's label.
+      // words — the notes saved under this name, then who saved them (final
+      // fix round, re-audit 2 item 3) — and the consequence in one line; the
+      // name to type is shown as text to copy, never only inside the label.
       '<div class="mem-wsdel-title" id="mem-ws-del-title">' + escapeHtml(wsDeleteQuestion(del)) + '</div>' +
+      (savedBy ? '<div class="mem-wsdel-body mem-wsdel-savedby">' + escapeHtml(savedBy) + '</div>' : '') +
       '<div class="mem-wsdel-body">' + escapeHtml(WS_DELETE_CONSEQUENCE) + '</div>' +
       what + warn + where +
       '<label class="mem-wsdel-label" for="mem-ws-del-input">These notes are saved under the name ' +

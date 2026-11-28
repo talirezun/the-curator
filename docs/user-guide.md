@@ -1889,7 +1889,7 @@ the reader)*. A card headed **Where the work stands** — *"The note the last ag
 agent you open reads this first."* — shows the handoff's headline as its title and its sections
 (*Where things stand*, *Next steps*, …) as they are in the file, rendered as Markdown. Under it, a
 footer: **Saved · ‹agent› · ‹computer› · ‹age›**, **Open the full note ›** (the [reader](#reading-a-handoff),
-with every chip and warning) and **Delete ‹agent›'s notes…** ([Deleting a handoff](#deleting-a-handoff)).
+with every chip and warning) and **Delete the notes saved as "‹work-stream›"…** ([Deleting a handoff](#deleting-a-handoff)).
 The card always shows the **newest** note: when a save under a new work-stream, another computer's
 save after a sync, or a second agent's first save becomes the newest, the card reads it and shows
 it by itself; a note open in the reader is never swapped under you.
@@ -2415,7 +2415,7 @@ agent's own save time wherever there is one.
 | **Headline** | That save's own one-line headline — *not* the project's, so a fortnight-old row shows what it was doing a fortnight ago |
 | **Computer** | The computer that saved it, by name |
 | **Size** | The note's size, against nothing — a note over its budget is trimmed and the trim is noted in the note itself, never refused |
-| **Delete** | **Delete ‹agent›'s notes…** — the whole work-stream ([Deleting a handoff](#deleting-a-handoff)). Absent on a Shared Brain mirror |
+| **Delete** | **Delete…** (read aloud as *Delete the notes saved as "‹work-stream›"…*) — the whole work-stream ([Deleting a handoff](#deleting-a-handoff)). Absent on a Shared Brain mirror |
 
 **Search notes…** filters by any of those words; once more than one harness has saved, a
 **Harness** picker narrows to one agent (with one, the toolbar just says *"1 harness"*).
@@ -2426,18 +2426,19 @@ many saved before stopping, and **Saves by harness** for the same days.
 
 #### Deleting a handoff
 
-*New in v3.75.0; reworded in v4.3.0.* The press says whose notes go — **Delete Claude Code's
-notes…** (or *Delete the notes saved as "main"…* when no agent is named) — and sits in the footer
-of the note on the **Now** tab, and on every row of Pro's **History** table. It deletes the **whole
+*New in v3.75.0; reworded in v4.3.0.* The press names the notes that go — **Delete the notes
+saved as "main"…**, by the work-stream's name, because more than one agent can save under one name
+— and sits in the footer of the note on the **Now** tab, and on every row of Pro's **History** table. It deletes the **whole
 work-stream** the note belongs to — every machine's saved copy of it, each with its Journal and any
 kept previous handoff — not just the row you pressed. Nothing else is touched: the standing brief,
 your other work-streams, the Documents, the wiki and the agent's connection to The Curator stay as
 they are.
 
 1. Press it. A card opens **at the press** — under the note on Now, under the table on History —
-   and scrolls into view: *"Delete Claude Code's notes on this project?"*, with one line, *"Its
-   latest note and its journal go to The Curator's trash, from every computer that saved them. Its
-   connection to The Curator is not touched."*
+   and scrolls into view: *"Delete the notes saved as "main"?"*, then who saved them — *"Saved by
+   Claude Code (this Mac) and Antigravity (studio-mac)."* — and one line, *"Its latest note and its
+   journal go to The Curator's trash, from every computer that saved them. Its connection to The
+   Curator is not touched."*
 2. The card reads the work-stream fresh and lists **every machine's copy** with its newest headline
    and how long ago it was saved, marking the one from **this machine**. When any copy was saved on
    another computer it says so plainly: *"Sync will remove it on your other computers too."*
