@@ -380,7 +380,7 @@ save takes it, with no warning, because overwriting is the correct behaviour.
   inject or record; it **never composes a handoff**, because a fabricated one is worse than a missing
   one. A missed save still means the next read returns the **previous** state — stale, never
   corrupted, and nothing already saved is lost. Save early and often
-- **You can now tell whether any of it is working.** Project context → *Working state* opens with a
+- **You can now tell whether any of it is working.** Projects → a project → *History* (Pro; *Project context → Working state* before v4.3.0) opens with a
   **capture meter**: *"6 sessions in the last 30 days · 4 started with the context · 4 saved before
   stopping · 2 read and did not save"*, counted from a local, content-free log of which tools were
   called. In words, never a percentage — and it reports rather than blocks
@@ -398,7 +398,7 @@ save takes it, with no warning, because overwriting is the correct behaviour.
   a browser-only assistant cannot
 - **Handoffs and journals are never written by the browser.** Agents write them over MCP, and
   since v3.63.0 you can write one yourself from a shell with `my-curator save` — a second **local
-  client** of the same store, not a route the app exposes. The **Context** rail item renders them,
+  client** of the same store, not a route the app exposes. The **Projects** rail item (*Context* before v4.3.0) renders them,
   and nothing in the app edits them. The standing brief is the exception and always
   was yours — edit it under **Domains → Projects in this domain**, or open
   `state/<project>/project.md` in any editor (`state/project.md` for a domain's own project)

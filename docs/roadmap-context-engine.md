@@ -1,5 +1,10 @@
 # Roadmap — the context engine (v3.61.0 → v3.65.0)
 
+> **A name, since v4.3.0.** The in-app page this file calls *Project context* (rail caption
+> *Context*, the "Context view") is the **Projects** page since v4.3.0 — same view id `memory`, same
+> routes and files ([user guide §7](user-guide.md#project-context--what-the-screen-shows)). The names
+> below are left as they were when each section was written.
+
 > **Read this like the other roadmap documents in this folder.** Same convention as
 > [roadmap-chat-modes.md](roadmap-chat-modes.md), [roadmap-menubar-widget.md](roadmap-menubar-widget.md)
 > and [roadmap-automatic-sync.md](roadmap-automatic-sync.md): **most of what follows has not been

@@ -2,9 +2,10 @@
 
 **Status: shipped in v3.17.0; projects added in v3.48.0; the foundations tier added in v3.59.0;
 the reading plan added in v3.62.0.** The store (`src/brain/working-state.js`) and the MCP tool
-layer are live. The app's **Context** rail item opens **Project context**, which renders the store,
-backed by `/api/memory` — and it is read and *written* by an agent over MCP, and readable by you in
-a text editor. (The rail caption and the page title were renamed in v3.62.0; the view id, the
+layer are live. The app's **Projects** rail item (*Context*, the page *Project context*, from v3.62.0
+to v4.2.x) renders the store, backed by `/api/memory` — and it is read and *written* by an agent over
+MCP, and readable by you in a text editor. (The rail caption and the page title were renamed in
+v3.62.0 and again in v4.3.0; the view id, the
 `/api/memory` path, every `mem-*` class and every filename deliberately did not follow — a rename
 of those would be a mechanical, high-blast-radius diff for no user-visible gain.)
 
@@ -1342,7 +1343,7 @@ never part of anything an agent wrote. The single-writer rule is unchanged and
 is exactly what this illustrates: one writer per FILE, with provenance that
 matches. Tiers 2 and 3 stay agent-only over MCP.
 
-**The Context screen reads tiers 0–3 and writes only tiers 0 (curator-owned)
+**The Projects page (the Context screen before v4.3.0) reads tiers 0–3 and writes only tiers 0 (curator-owned)
 and 1, plus this one metadata file.** A `shared-*` mirror is refused with 403
 at the route, so the same screen that lists a mirror's wikis cannot change
 them.
@@ -1938,10 +1939,13 @@ what that measurement's own *"shape rather than a measured constant"* caveat ant
 
 ## 6. What the app writes, and what it does not
 
-**There is an in-app view.** The **Context** rail item opens **Project context**, which renders the
-store — every project's canonical documents, its brief, its handoffs and its journal, browsable
-without an MCP client at all — grouped by domain and then by project, and it opens on the project
-you last looked at in that domain with its latest work-stream first. The **Domains** view carries
+**There is an in-app view.** The **Projects** rail item (until v4.3.0 *Context*, the page *Project
+context*) renders the store — every project's canonical documents, its brief, its handoffs and its
+journal, browsable without an MCP client at all — and opens on the project written to most recently.
+**Since v4.3.0 it is one header with a status sentence and tabs — Now · Agents · Starting kit, with
+History · Budget · Computers in Pro — and the numbered steps described below are the page as it was
+from v3.55.0 to v4.2.x**, kept here as the design record; the current screen, word for word, is
+[the user guide's Projects chapter](user-guide.md#project-context--what-the-screen-shows). The **Domains** view carries
 the other half: a **Projects** section on each domain card, where projects are created, renamed,
 deleted with a typed confirmation, given a standing brief, and where **Copy marker line** hands you
 the `.curator-project` line for a repository, with **Copy agent instructions** beside it.

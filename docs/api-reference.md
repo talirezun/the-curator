@@ -3676,8 +3676,8 @@ harness config, a skill folder, a repository file or a git ref; the two PUTs wri
 ## Working state — Project context (`/api/memory`)
 
 Working state (`domains/<domain>/state/`, v3.17.0; **projects inside a domain since v3.48.0**) is
-the store behind the `/next` shell's **Project context** view (called *Agent memory* through
-v3.61.1 — the view's visible name changed in v3.62.0, **the path did not**) and the Domains view's
+the store behind the `/next` shell's **Projects** page (called *Agent memory* through
+v3.61.1 and *Project context* through v4.2.x — the view's visible name changed in v3.62.0 and v4.3.0, **the path did not**) and the Domains view's
 **Projects** sub-section: a standing brief per project, a per-`(work-stream, machine)` handoff, and an
 append-only journal of saves. Served from `src/routes/memory.js` over
 `src/brain/working-state.js`.
@@ -4705,7 +4705,7 @@ only in a view is a confirmation every other client skips.
 ### GET /api/memory/:domain/:project/scopes/:scope/delete-preview
 
 **New in v3.75.0.** What [`DELETE …/scopes/:scope`](#delete-apimemorydomainprojectscopesscope)
-would take, read fresh — the Context view reads it when its **Delete handoff** confirm opens, so the
+would take, read fresh — the Projects page reads it when its delete confirm (**Delete ‹agent›'s notes…**; *Delete handoff* before v4.3.0) opens, so the
 card lists every machine's copy rather than the one row that was pressed. Read-only. `:project` is
 the domain name for the domain's own project.
 

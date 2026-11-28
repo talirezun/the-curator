@@ -2,7 +2,7 @@
 
 ## What is project context?
 
-Project context is everything one project gives an agent. The screen that shows it was called Agent memory until v3.62.0, and the older name still describes half of it: the working state — called **Memory** on screen since v3.65.1 — an agent leaves behind at the end of a session so the next session picks the work up instead of starting cold. The other half is the project's foundations, shown on screen as **Documents** — the canonical documents it is built against. These are copy renames only: the store still uses `foundations`, `scope` and `journal.jsonl` on disk and over MCP.
+Project context is everything one project gives an agent. The screen that shows it is **Projects** (since 4.3.0; Project context before, Agent memory until v3.62.0), and the oldest name still describes half of it: the working state — called **Memory** on screen since v3.65.1 — an agent leaves behind at the end of a session so the next session picks the work up instead of starting cold. The other half is the project's foundations, shown on screen as **Documents** — the canonical documents it is built against. These are copy renames only: the store still uses `foundations`, `scope` and `journal.jsonl` on disk and over MCP.
 
 Layers 1 and 2 of The Curator are your sources and the wiki built from them. Layer 3 is this.
 
@@ -96,7 +96,7 @@ In the app, documents are the **Starting kit**'s Documents row (Pro: a table wit
 
 ## How do I start a project, and where do its foundations come from?
 
-Creating a project — Domains → Projects → New project — asks a second question below the brief: where do this project's first documents come from? **As of v3.69.0 this is a convenience for the moment of creation, not a lasting restriction** — both Add doors on step ① Documents stay open afterward regardless of what you pick, and any number of sources can be added later.
+Creating a project — Domains → Projects → New project — asks a second question below the brief: where do this project's first documents come from? **As of v3.69.0 this is a convenience for the moment of creation, not a lasting restriction** — both Add doors on the Starting kit's Documents stay open afterward regardless of what you pick, and any number of sources can be added later.
 
 Three choices. **Curator keeps them** (the default) seeds four skeleton documents immediately — architecture, decisions, conventions and roadmap — each a prompt to answer, not a fact. **Mirror from a repository on this Mac** points at a checkout (a plain folder works too, no git required) and scans it for candidate documents to copy byte-for-byte, becoming the project's first source. **Decide later** writes nothing, and the same choice reappears the first time you open that project's Documents block.
 
@@ -110,7 +110,7 @@ Yes, since version 3.61.0 — but only a **written or copied** document. A mirro
 
 Every project, mirrored or not, carries **Write a document** in the Documents block's head row (renamed from Add document in v3.68.0), and each written or copied row carries its own Edit control opening an editor in place of the table, the same pattern the standing brief already uses. Saving is disabled past 512 KB — a canonical document cannot be honestly trimmed — and a project nearing its 200 KB total budget is told so without being stopped. Filling in a skeleton and saving it clears the skeleton mark for good.
 
-**Step ①'s head row always shows two doors — Add from this computer and Add from GitHub — both always enabled, on every project, since v3.69.0 retired the old "a project has one source" restriction.** A project can mix written, copied and mirrored documents, from up to 8 sources (folders and/or GitHub repositories), at once. Add from this computer offers **Keep in sync** (a folder mirror; the default when the folder is itself inside a git checkout) or **Copy once** — both always shown. Adding always appends — it never replaces a document already there — and a name already taken by another source lands under a readable suffix ("lands as `<name>`"), never an overwrite. A **sources strip** under the head row lists every source the project draws from, each with its own Refresh, plus a Refresh-all that refreshes every source under one lock (a failing source named and left untouched, the others still refresh). A document copied in is labelled **"copied from `<folder>`"**, not "written by you," everywhere its source shows; editing it in the app's own editor makes it yours from then on.
+**The Documents list always shows two doors — Add from this computer and Add from GitHub — both always enabled, on every project, since v3.69.0 retired the old "a project has one source" restriction.** A project can mix written, copied and mirrored documents, from up to 8 sources (folders and/or GitHub repositories), at once. Add from this computer offers **Keep in sync** (a folder mirror; the default when the folder is itself inside a git checkout) or **Copy once** — both always shown. Adding always appends — it never replaces a document already there — and a name already taken by another source lands under a readable suffix ("lands as `<name>`"), never an overwrite. A **sources strip** under the head row lists every source the project draws from, each with its own Refresh, plus a Refresh-all that refreshes every source under one lock (a failing source named and left untouched, the others still refresh). A document copied in is labelled **"copied from `<folder>`"**, not "written by you," everywhere its source shows; editing it in the app's own editor makes it yours from then on.
 
 This does not add a second writer to a document: the check is now per document rather than per project, and a human edit is stamped as a human's the same way an agent's edit is stamped as an agent's, so nothing reading a foundation's history is ever told the wrong thing wrote it.
 
@@ -130,15 +130,15 @@ Reads never write. The bootstrap does not mark anything as seen on your behalf; 
 
 ## How do I choose which documents an agent gets automatically?
 
-Since version 3.67.0 each document has one of three **start states**, set from its own row's control in step ① Documents:
+Since version 3.67.0 each document has one of three **start states**, set from its own **At start** picker: Projects → Starting kit → press the **Documents** row (both layouts; Pro keeps the list open). On screen since 4.3.0 (on disk unchanged: `read-first`, `on-request`, `not-at-start`):
 
-- **Read first** — its text arrives with every session, within the reading budget.
-- **On request** — listed at the start; the agent opens it by name when the task needs it.
-- **Not at start** — kept and mirrored, but not listed at the start at all; name it in the standing brief under "Read before you…" if an agent should still find it. (An agent that asks for a not-at-start document by name still receives it — this state only changes what is offered unprompted.)
+- **Always read** (was "read first") — its text arrives with every session, within the reading budget.
+- **When needed** (was "on request") — listed at the start; the agent opens it by name when the task needs it.
+- **Hidden** (was "not at start") — kept and mirrored, but not listed at the start at all; name it in the standing brief under "Read before you…" if an agent should still find it. (An agent that asks for a not-at-start document by name still receives it — this state only changes what is offered unprompted.)
 
 A project with four documents can hand an agent all four at the start of every session. A project with twenty cannot — the session then opens with twenty documents most of which have nothing to do with the work in front of it. Marking is how you choose which ones do.
 
-Mark sparingly. The read-first set is the one sent every session, so it is the one that costs; two or three documents is a reading plan, twelve is the old behaviour with extra steps. The block's summary line counts read-first and on-request together — "2 read first · 4 on request" — and tells you when the marked set has grown past what one session's reading can carry.
+Mark sparingly. The read-first set is the one sent every session, so it is the one that costs; two or three documents is a reading plan, twelve is the old behaviour with extra steps. The Documents row counts them — "9 documents · 2 always read, 7 when needed" — and a notice says when the always-read set has grown past what the reading budget can carry.
 
 Marking works on a mirrored document too. The mark lives in The Curator's own index rather than in the document, so the file in your checkout is untouched, a refresh still compares the two byte for byte, and the mark survives that refresh: the repository owns the text, you own the reading order.
 
@@ -165,21 +165,21 @@ Seven presets, all owner-written only — no MCP tool, no CLI flag and no hook e
 The picker names each preset with the same figure the meter draws (bytes ÷ 4). A project already holding an older 120 KB or 200 KB value keeps it, unchanged, and reads as
 **Custom** with its nearest preset named.
 
-Pro's **Budget** tab (step ④ "Session start" before 4.3.0; with Pro off, the Starting kit's one bar) draws that bootstrap as one
+The **Reading budget** picker sits beside the Starting kit's one bar, in both layouts. Pro's **Budget** tab (step ④ "Session start" before 4.3.0) draws that bootstrap as one
 bar: your whole context window to scale, your harness's share hatched at the left (an
 owner-entered estimate of what your agent harness loads for itself, never measured, never added
 to what The Curator sends), then The Curator's own layers, each named, and a dashed room the
 width of your reading budget. **Window** and **Your harness's share** (Pro; "Your tool's share"
 before 4.2.0) are set once per computer, and the menu bar widget reads the same two settings. Every figure is a token estimate, bytes ÷ 4,
-shown with "≈". When every session is handed more than 32 KB of documents, a line says so, with
-**Set a reading budget** beside it. **A bootstrap larger than about 80 KB (≈20k tokens) arrives in
+shown with "≈". When every session is handed more than 32 KB of documents, a line on the Starting kit says so, with
+**Set a reading budget** (it opens that picker) beside it. A start over the window says "Over the window by ≈N tokens at the start of a session." on the Starting kit too, with "It does not fit: choose a smaller reading budget, or fewer documents to always read." **A bootstrap larger than about 80 KB (≈20k tokens) arrives in
 more than one MCP reply — the picker's own row states how many** — because Claude Code shows an
 MCP reply of at most ≈25,000 tokens and silently saves anything larger to a file instead of
 putting it in the model's window.
 
 ## Can The Curator suggest which documents to mark?
 
-Yes — **Suggest a reading plan**, in step ①'s head row, since version 3.67.0. It proposes a start state for every document without changing anything; you review the **Suggested** column and press **Apply suggestion** for the rows you want, or **Dismiss**.
+Yes — **Suggest a reading plan**, on the Starting kit (Pro), since version 3.67.0. It proposes a start state for every document without changing anything; you review the **Suggested** column and press **Apply suggestion** for the rows you want, or **Dismiss**.
 
 **Suggest (free)** needs no AI key. It follows your standing brief's "Read before you…" list (those stay on request, since you have already said when to open them), each document's role and size, and your reading budget: conventions, decisions and architecture documents are proposed read first while they fit the budget and never when one alone is larger than half of it; skeletons stay on request; a stale roadmap over 64 KB may be proposed not at start; a document you already keep not at start stays there.
 
@@ -308,7 +308,7 @@ One `.curator-project` file, holding `domain/project`, serves every tool: the co
 
 Antigravity has its own row in Setup. `my-curator doctor` reports whether its MCP config names the bridge (it checks `~/.gemini/config/mcp_config.json`, `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json`), whether `AGENTS.md` or `GEMINI.md` in the current folder carries the block, and whether the installed skills match this version. `my-curator install-hooks antigravity` wires `PreInvocation` (the project's context before its first model call) and `Stop` (one save ask when it stopped after reading without saving), in the project-level `<repo>/.agents/hooks.json` by default (`--git-exclude` keeps it out of git). On 26 September 2026 the session-start injection was seen used from that file (from the user-level `~/.gemini/config/hooks.json` it ran but was not used); the Stop ask has not been observed. `my-curator hook-log` prints one content-free line per hook run. Antigravity's sessions appear as `other` in the usage log. If the agent's first reply names none of the brief's rules, the pointer did not reach it.
 
-Since version 3.77.0 the app shows all of this without a terminal: **Projects → a project → Agents** (step 5 of the Context page before 4.3.0) shows, for that project on this computer, one row per agent harness with what is left, each fix a copy, reveal or Sync now button, and **Settings → MCP bridge → Agent harnesses** lists each harness's config files, skills and hooks. The Setup check only reads those files, to see whether they name `my-curator`; the app writes that one entry only when you press **Install for me**. The user-guide file answers what each Setup warning means, how to add or remove a harness, and what travels by Personal Sync, by the project's git, or not at all. Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app
+Since version 3.77.0 the app shows all of this without a terminal: **Projects → a project → Agents** (step 5 of the Context page before 4.3.0) shows, for that project on this computer, one row per agent harness with what is left, each fix a copy, reveal or Sync now button, and **Settings → MCP bridge → Agent harnesses** lists each harness's config files, skills and hooks. The Setup check only reads those files, to see whether they name `my-curator`; the app writes that one entry only when you press **Set it up for me** (in Connect an agent) or **Install for me** (in Settings → MCP bridge). The user-guide file answers what each Setup warning means, how to add or remove a harness, and what travels by Personal Sync, by the project's git, or not at all. Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app
 
 Skills for Antigravity, from its documentation: a `skills/` folder under `~/.gemini/config/` for every project or `.agents/` in the project, or a plugin's `skills/` folder such as `~/.gemini/config/plugins/the-curator/skills/`. Copy each skill folder whole, companion files included; Setup, or `my-curator doctor`, names a skill that differs from this version or is missing.
 
@@ -550,7 +550,7 @@ A hook never writes CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules. That p
 
 ## How do I know whether my agents are actually saving?
 
-The Project context screen's Memory step opens with a row called **Agent connections** (called *Agent sessions* through version 3.73.x, *Capture* through version 3.69.0; on-disk field names unchanged) that answers exactly that. It is built from the same recessed, monospace, terminal-like reading component — a "monitor" — the app uses for every live-state display. Its closed summary already carries the count and the three qualifying clauses:
+Pro's **History** tab on Projects (the Memory step's first row before 4.3.0) shows a row called **Agent connections** (called *Agent sessions* through version 3.73.x, *Capture* through version 3.69.0; on-disk field names unchanged) that answers exactly that. It is built from the same recessed, monospace, terminal-like reading component — a "monitor" — the app uses for every live-state display. Its closed summary already carries the count and the three qualifying clauses:
 
 ```
 CONNECTIONS   6 connections in the last 30 days
@@ -607,7 +607,7 @@ Yes. Through v3.68.0 the Add from GitHub door, pressed on a project that mirrore
 
 ## What is "Copy agent instructions", and what does it give me?
 
-It is a button in two places: on every project's row under Domains, beside **Copy marker line**; and in the header of the **Project context** screen. It puts a short block on your clipboard with your domain and project already filled in. **Since version 3.67.2**, a confirmation appears briefly in the bottom-right corner and closes on its own after 30 seconds (it waits while your pointer is over it; press Copy again to see it once more), and it says exactly where to paste the block: at the very top of the file your agent reads every session — `CLAUDE.md` for Claude Code, `AGENTS.md` for Codex and others, `GEMINI.md` for Gemini CLI, or a rule file in `.cursor/rules` for Cursor. Position matters because Codex silently truncates `AGENTS.md` at 32,768 bytes, so a block appended at the bottom can be cut off unread.
+It is a button in two places: on every project's row under Domains, beside **Copy marker line**; and in the **···** menu of a project on **Projects**. It puts a short block on your clipboard with your domain and project already filled in. **Since version 3.67.2**, a confirmation appears briefly in the bottom-right corner and closes on its own after 30 seconds (it waits while your pointer is over it; press Copy again to see it once more), and it says exactly where to paste the block: at the very top of the file your agent reads every session — `CLAUDE.md` for Claude Code, `AGENTS.md` for Codex and others, `GEMINI.md` for Gemini CLI, or a rule file in `.cursor/rules` for Cursor. Position matters because Codex silently truncates `AGENTS.md` at 32,768 bytes, so a block appended at the bottom can be cut off unread.
 
 This is the composed block. `<domain>` and `<project>` stand where your own names appear; the project name is substituted at two points and the `domain/project` pair at one.
 
@@ -737,14 +737,14 @@ Since version 4.3.0 the rail item is **Projects** (it was **Context**, the page 
 
 | Tab | Its sentence | Simple | Pro adds |
 |---|---|---|---|
-| **Now** | Where the work stands — the note the last agent left | The latest handoff as readable text; footer "Saved · agent · computer · age", **Open the full note ›** (side panel), **Delete…**; **Copy "continue" prompt**; **Earlier notes**. Before the first save: a checklist — Create the project (done) · Connect an agent · Tell it about this project (Copy agent instructions) · Open your agent and say "save where we are" | The note's facts (work-stream, harness, model, computer, size, path) and its work-stream's journal, as tables |
-| **Agents** | The agents that can open this project's notes | One row per harness, one status (**Ready**, **Needs you**, **Not connected**), at most one action; the row opens its four setup steps in the side panel; every warning as a notice; "N files are only on this computer" with **Sync now** | One table row per harness per computer: Connected · Skills · Instructions · Hooks · Last save · Saves 7 d |
-| **Starting kit** | What every agent reads before it does anything | **Brief** (Edit), **Documents** (Add; "9 documents · 2 always read, 7 when needed"), **Knowledge** (Add a domain), and one bar: "The starting kit uses 3% of your agent's memory — plenty of room left" | The documents table (Document · Source · At start · Tokens · Updated) and Suggest a reading plan |
-| **History** (Pro) | Every note any agent saved, in one table | — | When · Work-stream · Harness · Model · Headline · Computer · Size; the agent-connections figures |
+| **Now** | Where the work stands — the note the last agent left | The latest handoff as readable text; footer "Saved · agent · computer · age", **Open the full note ›** (side panel), **Delete ‹agent›'s notes…** (the whole work-stream, to the trash, typed confirm); **Copy "continue" prompt**; **Earlier notes**. Before the first save: "Three steps, then your agent remembers" — Create the project (done) · 1 Connect an agent · 2 Tell it about this project (Copy agent instructions) · 3 Open your agent and say "save where we are" | The note's facts (work-stream, harness, model, computer, size, path) and its work-stream's journal, as tables |
+| **Agents** | The agents that can open this project's notes | One row per harness, one status (**Ready**, **Needs you**, **Not connected**), at most one action (none when its fix is in a notice); the row opens its four setup steps in the side panel; every warning as a notice; "N files are only on this computer" with **Sync now** | One table row per harness per computer: Connected · Skills · Instructions · Hooks · Last save · Saves 7 d |
+| **Starting kit** | What every agent reads before it does anything | **Brief** (Edit), **Documents** (Add; "9 documents · 2 always read, 7 when needed"; the row opens the documents table with each one's At start picker, edit, delete), **Knowledge** (Add a domain), and one bar: "The starting kit uses 3% of your agent's memory — plenty of room left", with the **Reading budget** picker | The table stays open (Document · Source · At start · Tokens · Updated), and Suggest a reading plan |
+| **History** (Pro) | The latest note of each work-stream, on each computer, in one table | — | When · Work-stream · Harness · Model · Headline · Computer · Size; the agent-connections figures |
 | **Budget** (Pro) | How much of the agent's window the starting kit takes | — | Window, Reading budget and harness-share pickers, the meter, a per-layer table |
 | **Computers** (Pro) | Which computers hold this project, and how each part reaches them | — | Computers, the project folder, files not sent, the three travel routes |
 
-The **Pro** switch (rail, above Settings; Settings → General) changes the layout, not the data: a warning, cost, refusal, confirm or result is never Pro-only, and every task finishes in Simple. **When guiding someone, ask first whether Pro is on**; a control marked (Pro) appears only then. Start states on screen are **Always read / When needed / Hidden** (on disk still `read-first`, `on-request`, `not-at-start`). **Connect an agent** is one flow in the side panel: pick the agent → connect it on this computer (Install for me or the entry to copy) → point it at this project (skills, instructions, first save). Settings → MCP bridge still exists and opens with "Connect agents from a project now." Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#project-context--what-the-screen-shows
+The **Pro** switch (rail, above Settings; Settings → General) changes the layout, not the data: a warning, cost, refusal, confirm or result is never Pro-only, and every task finishes in Simple. **When guiding someone, ask first whether Pro is on**; a control marked (Pro) appears only then. Start states on screen are **Always read / When needed / Hidden** (on disk still `read-first`, `on-request`, `not-at-start`). **Connect an agent** is one flow in the side panel: pick the agent → connect it on this computer (**Set it up for me** where The Curator can, otherwise the setup text to paste; skills) → point it at this project (instructions, first save); **Done** closes it. The agent joins the project only when you go ahead. Settings → MCP bridge (**Install for me**) opens with "Connect agents from a project now." and a **Connect an agent** button. Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#project-context--what-the-screen-shows
 
 Notices above the note on **Now**, never folded (a healthy save shows none):
 
@@ -844,7 +844,7 @@ Reads are capped at the source, so a hand-edited or synced oversized file cannot
 
 ## Something is wrong — what do I check?
 
-**The Project context screen is empty.** Nothing has saved yet. Install the `curator-continuity` skill, and paste the block from **Copy agent instructions** into the file your tool loads every session. That is the write half, and it is not code.
+**A project's Now tab shows only the checklist.** Nothing has saved yet. Install the `curator-continuity` skill, and paste the block from **Copy agent instructions** into the file your tool loads every session. That is the write half, and it is not code.
 
 **My agent says it is going to save and then nothing appears.** Check that the MCP bridge is connected — Settings, MCP bridge, Run self-test. In one measured run the agent said it would save, failed to issue the call, and tried a shell workaround instead.
 

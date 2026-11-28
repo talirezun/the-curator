@@ -105,7 +105,8 @@ an agent opens by name when the work calls for it. A project's standing brief ca
 each document has a third state too, **not at start**, and each project has its own reading
 budget — since v3.70.0, seven presets named in tokens, Index only (0) through Max (200k) — under
 the governing rule **"the right context, not all of it": an agent gets its foundations, the last
-state and the standing brief at the start; everything else is on demand.** Step ④ draws that
+state and the standing brief at the start; everything else is on demand.** The Starting kit says
+it in one bar, with the reading-budget picker beside it, and Pro's **Budget** tab draws that
 bootstrap as a **context-window meter** — your window to scale, **your harness's share** (your own
 estimate of what the agent harness loads for itself) hatched, and
 The Curator's own share broken out layer by layer — so "the right context" is something you can
@@ -236,8 +237,8 @@ a project → **Agents** checks, for that project on this computer, what several
 one row per agent with one status (Ready · Needs you · Not connected) and its next step — and
 **+ Connect an agent** walks a new one through it in one flow: each harness's MCP entry, both skills, the instruction block in
 `CLAUDE.md` / `AGENTS.md`, a committed and pushed `.curator-project`, and a newer handoff waiting
-from another computer. Every problem is one line with its own fix button; nothing is written to your
-harnesses or your repository. It also says which route each thing travels by — **Personal Sync** for
+from another computer. Every problem is one line with its own fix button; the check writes nothing to your
+harnesses or your repository (only **Set it up for me** writes, an MCP entry, after a preview). It also says which route each thing travels by — **Personal Sync** for
 handoffs, the brief and Documents; **the project's own git** for the instruction files and the
 marker; **nothing** for MCP settings, skills and hooks, which are set up on each computer
 ([what travels how](docs/user-guide.md#what-travels-between-your-computers-and-how)).

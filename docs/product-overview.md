@@ -189,7 +189,7 @@ that the second brain gets **better** with use rather than merely bigger.
 
 ## 4. Every capability, and when you would reach for it
 
-**The app is three places** — **Chat** (*ask*), **Domains** (*knowledge*), **Context** — with Sync
+**The app is three places** — **Chat** (*ask*), **Domains** (*knowledge*), **Projects** (*context*; called **Context** until v4.3.0) — with Sync
 and Settings in the rail's footer. Everything that acts on one domain, Ingest and Shared Brain
 included, lives on that domain's page; each of those two also keeps a full-page view one press
 away, the same panel rather than a second copy of it.
@@ -628,7 +628,7 @@ being reachable through OpenRouter.
 | The semantic-duplicate scan | The structural Health scan and every deterministic repair |
 | Compile to Wiki | Settings, key management, updates |
 | | Every cost estimate — all are computed locally with no model call |
-| | The MCP bridge itself, Project context, and the menu bar icon |
+| | The MCP bridge itself, the Projects page, and the menu bar icon |
 
 Three paid actions quote a cost and ask before spending: batch ingest, the semantic-duplicate
 scan, and Compile to Wiki. Single-file ingest and chat do not — they are the two you invoke
@@ -885,7 +885,7 @@ rules, the agent is told to **say so and ask you** rather than resolve it silent
 direction — which is what keeps this from being a way to plant orders.
 
 **7. There is exactly one writer, and the app is deliberately read-only over state.** You can
-browse every project's brief, handoff and journal in the app's **Project context** view without an
+browse every project's brief, handoff and journal in the app's **Projects** page (*Project context* until v4.3.0) without an
 MCP client at all — but you cannot write there. A browser write path would make the app a
 second writer to the same files, which would break the layout guarantee that keeps two
 computers from destroying each other's handoffs, and a human edit would arrive wearing the last

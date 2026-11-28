@@ -1,5 +1,10 @@
 # Roadmap — menubar widget: background running + a live view of agent memory (Phase 1 SHIPPED; Phase 3 PARTLY; Phase 2 not built)
 
+> **A name, since v4.3.0.** The in-app page this file calls *Project context* (rail caption
+> *Context*, the "Context view") is the **Projects** page since v4.3.0 — same view id `memory`, same
+> routes and files ([user guide §7](user-guide.md#project-context--what-the-screen-shows)). The names
+> below are left as they were when each section was written.
+
 > **This file is no longer entirely a plan, and the split is exact.** **Phase 1 —
 > the menu bar icon and its native menu — is built and is in the code.** Phase 2
 > (the rendered popover panel and the per-scope popup) is **not built**, and

@@ -13,12 +13,12 @@
     footer reading "Saved · Claude Code · this Mac · 27 min ago" with "Open the full note", and a
     "Copy continue prompt" button, then two Earlier notes rows. Agents: "The agents that can open
     this project's notes", three rows each with one status chip — Claude Code Ready, Antigravity
-    Needs you with an Update button, OpenCode Not connected with Continue — and an information
+    Needs you (its fix is in a notice below the rows, so the row carries no button of its own), OpenCode Not connected with Continue — and an information
     notice "14 files are only on this computer" with Sync now. Starting kit: "What every agent
     reads before it does anything", three rows — Brief with Edit, Documents with Add, Knowledge with
     Add a domain — and one bar, "The starting kit uses 3% of your agent's memory — plenty of room
-    left". At the foot, a quiet line "More in Pro: every save in a table, the token budget, your
-    computers. Turn on Pro", and a caption: in Simple, three tabs that each answer one question;
+    left". At the foot, a quiet line "More in Pro: the latest note of each work-stream, the token
+    budget, your computers. Turn on Pro", and a caption: in Simple, three tabs that each answer one question;
     in Pro, the same three widen into tables and three more tabs appear; a warning, a cost, a
     refusal or an outcome is never only in Pro.
   </desc>
@@ -151,8 +151,6 @@
   <text class="m" x="290" y="324">date</text>
   <rect class="chip-attn" x="400" y="284" width="72" height="18" rx="9"/>
   <text class="attn" x="436" y="297" text-anchor="middle">◆ Needs you</text>
-  <rect class="btn" x="412" y="314" width="60" height="20" rx="5"/>
-  <text class="btntxt" x="442" y="328" text-anchor="middle">Update</text>
 
   <rect class="inner" x="278" y="348" width="204" height="68" rx="8"/>
   <text class="t" x="290" y="368">OpenCode</text>
@@ -212,8 +210,8 @@
   <text class="m" x="522" y="540">document can have</text>
 
   <!-- ── FOOT ───────────────────────────────────────────────────── -->
-  <text class="foot" x="24" y="606">More in Pro: every save in a table, the token budget, your computers.</text>
-  <text class="link" x="430" y="606">Turn on Pro ›</text>
+  <text class="foot" x="24" y="606">More in Pro: the latest note of each work-stream, the token budget, your computers.</text>
+  <text class="link" x="540" y="606">Turn on Pro ›</text>
   <line class="rule" x1="24" y1="622" x2="736" y2="622"/>
   <text class="foot" x="24" y="646">Simple: three tabs, each answering one question. Pro: the same three widen into tables, and History,</text>
   <text class="foot" x="24" y="664">Budget and Computers appear. Two layouts, one data model — a warning, a cost, a refusal or an</text>

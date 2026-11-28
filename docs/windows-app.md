@@ -220,7 +220,7 @@ The app can write its own entry into Claude Desktop's settings for you:
 
 1. **Quit Claude Desktop fully**: right-click its icon by the clock → **Quit** (closing its window is not enough).
 2. In The Curator: **Projects** → open a project → **+ Connect an agent** → **Claude Desktop**, and
-   on **Connect it on this computer** click **Install for me**, then **Apply**. *(The same install is
+   on **Connect it on this computer** click **Set it up for me**, then **Apply**. *(The same install is
    still in **Settings → MCP bridge**, section **Agent harnesses** — tick Claude Desktop, **Install
    for me**, **Apply**.)*
 3. Open Claude Desktop again, then click **Check again** in The Curator; its row should read
@@ -333,8 +333,8 @@ from each other.
    token. The app finds the browser install's sync history next to that folder and carries on with
    it, instead of starting a second history over the same files. If you later replace the token in
    one install, replace it in the other too.
-5. Press **Install for me** (**Projects → Connect an agent → Claude Desktop**, or **Settings → MCP
-   bridge**), so Claude Desktop starts the app's bridge
+5. Press **Set it up for me** (**Projects → Connect an agent → Claude Desktop**; it reads **Update
+   it for me** when an older entry is there), or **Install for me** in **Settings → MCP bridge**, so Claude Desktop starts the app's bridge
    instead of the browser install's (Claude Desktop holds one My Curator entry).
 
 **Run one of them at a time.** Two installs writing into one knowledge folder at once can get in

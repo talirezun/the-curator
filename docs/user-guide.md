@@ -774,7 +774,7 @@ The first time you open The Curator there is nothing to talk to yet, so a small 
 
 **Why the second list does not start with a key.** The memory layer and the MCP bridge do not use a model at all — the bridge reads and writes markdown on your disk and never calls a provider, and it runs with the app closed. If you came here to give your agents memory you can create a domain, create a project, paste the marker line and be productive with no API key whatsoever. The panel used to tell you "nothing else works without a model", which was simply false for that path; step 1 now names what a key *is* for — ingest and chat — and says the rest works without one.
 
-**Neither door locks anything in, and nothing is stored about "which kind of user you are."** The panel works out which list to show from what is actually on your disk — a wiki page means the first list, a project or an agent that has called the bridge means the second — and it asks only while neither is true. A **Pick a different start** link swaps lists whenever you like, and the third step of the agent list is the one screen you would otherwise have had to go looking for: **Settings → MCP bridge**, which the button opens directly.
+**Neither door locks anything in, and nothing is stored about "which kind of user you are."** The panel works out which list to show from what is actually on your disk — a wiki page means the first list, a project or an agent that has called the bridge means the second — and it asks only while neither is true. A **Pick a different start** link swaps lists whenever you like, and the third step of the agent list is the one flow you would otherwise have had to go looking for: *"Pick your agent. The Curator sets it up for you where it can; otherwise it shows exactly what to paste."* — its **Connect an agent** button opens [Connect an agent](#connect-an-agent--one-flow) on Projects (until v4.3.0 it opened Settings → MCP bridge).
 
 Each item has a button that takes you straight to the right place: **Add an AI key → Open Settings** opens **Settings › Providers & keys**, the section with the key fields (before v4.1.2 it opened Settings › General, where there is no key field). The panel tracks real state, not clicks: it reads *"2 of 3 done"* (or *"0 of 4 done"*) and ticks items off by itself as you actually complete them, and it stops appearing once they are all done. On the agent list the key step is **Optional**, so it does not count: once the other three steps are done the guide stops appearing, even with no key (v4.1.2; before, it kept coming back reading "3 of 4 done").
 
@@ -1302,7 +1302,7 @@ Named so you do not go looking:
 
 - **Watching the pulse move.** It is a **still picture, redrawn each time you open the menu** — not a live trace that ticks along while you watch. A menu item can carry an image, but not a live view, and a menu is frozen by the system the moment it opens. The *"Updated 14:32"* line at the bottom tells you which moment the picture is of.
 - **Judging your week by it.** Darkness is **how often**, never **how well**.
-- **Reading the handoff *in the menu*.** A handoff runs to fifteen thousand characters or more; there is no honest way to draw that in a menu bar. What it will do is **hand it to you** — the row's submenu can [copy the whole document, or a prompt that fetches it](#what-a-row-can-do). Clicking the row itself opens the app, on Project context, at that **project** — not the individual work-stream, which the picker there is for.
+- **Reading the handoff *in the menu*.** A handoff runs to fifteen thousand characters or more; there is no honest way to draw that in a menu bar. What it will do is **hand it to you** — the row's submenu can [copy the whole document, or a prompt that fetches it](#what-a-row-can-do). Clicking the row itself opens the app, on Projects, at that **project** — not the individual work-stream, which the picker there is for.
 - **Watching progress.** A save is not partly done; it has happened or it has not. There is no progress bar and there will not be one.
 - <a id="automatic-sync-is-not-built"></a>**Syncing by itself.** The widget observes; it never pushes or pulls. Automatic sync has been researched and **is not built** — the finding was that automatic *push* is safe and automatic *pull* is not (a pull rewrites files under you and prefers the remote on a conflict), so the recommendation is automatic push by explicit opt-in, with pull staying a decision you make. Until any of that exists, syncing is a button you press in the [Sync view](#15-sync-across-computers).
 
@@ -1630,12 +1630,12 @@ kit drawn solid, then History, Budget and Computers drawn dashed, marked as the 
 Below, one panel per Simple tab, each headed by its one sentence. Now shows the last note as
 readable text with its sections, a footer "Saved · Claude Code · this Mac · 27 min ago" with "Open
 the full note", a "Copy continue prompt" button and two Earlier notes. Agents shows three rows,
-each with one status chip — Claude Code Ready, Antigravity Needs you with Update, OpenCode Not
-connected with Continue — and a notice "14 files are only on this computer" with Sync now.
+each with one status chip — Claude Code Ready, Antigravity Needs you (its fix sits in a notice, so
+the row has no button of its own), OpenCode Not connected with Continue — and a notice "14 files are only on this computer" with Sync now.
 Starting kit shows Brief with Edit, Documents ("9 · 2 always read, 7 when needed") with Add,
 Knowledge with Add a domain, and one bar: "The starting kit uses 3% of your agent's memory —
-plenty of room left". At the foot, the quiet line "More in Pro: every save in a table, the token
-budget, your computers. Turn on Pro".](images/curator-projects-page.svg)
+plenty of room left". At the foot, the quiet line "More in Pro: the latest note of each
+work-stream, the token budget, your computers. Turn on Pro".](images/curator-projects-page.svg)
 
 *The Projects page in wireframe, on synthetic data. In Simple the page is three tabs; Pro keeps
 those three, widens them into tables and adds three more. There are no numbered steps any more —
@@ -1650,7 +1650,7 @@ the only numbers on the page are the connect checklist's, below.*
 | **"···"** | **Copy agent instructions** (the block for the file your agent reads, [§13b](#making-sure-your-agent-actually-does-it)) and **Check again** |
 | **ⓘ** | What a project is, in a short panel, with the link to this section |
 | **Tabs** | **Now · Agents · Starting kit**; with Pro on, also **History · Budget · Computers**. Each tab opens with **its one sentence** and a **How this works** door to its explainer |
-| **One quiet line** *(Simple only)* | *"More in Pro: every save in a table, the token budget, your computers. Turn on Pro ›"* |
+| **One quiet line** *(Simple only)* | What Pro adds — History's latest note of each work-stream, the token budget, your computers — and **Turn on Pro ›** |
 
 **The tabs, and the question each one answers:**
 
@@ -1658,29 +1658,35 @@ the only numbers on the page are the connect checklist's, below.*
 |---|---|---|---|
 | **Now** | *Where the work stands — the note the last agent left.* | The latest handoff **as readable text**, with who saved it, on which computer and when; **Copy "continue" prompt**; **Earlier notes**; the connect checklist until the first save | A table of that note's facts (work-stream, harness, model, computer, size, file path) and **This work-stream's journal** |
 | **Agents** | *The agents that can open this project's notes.* | One row per agent: its name, one line, **one status** and at most one action; every warning; files not on GitHub yet, with **Sync now** | One table row per agent **per computer**: Connected · Skills · Instructions · Hooks · Last save · Saves 7 d — [§13e](#13e-the-setup-check-in-the-app) |
-| **Starting kit** | *What every agent reads before it does anything.* | **Brief** (Edit) · **Documents** (Add) · **Knowledge** (Add a domain), and **one bar**: *"The starting kit uses 3% of your agent's memory"* | The documents as a table — Document · Source · At start · Tokens · Updated — with every add door and **Suggest a reading plan** |
-| **History** *(Pro)* | *Every note any agent saved, in one table.* | — | When · Work-stream · Harness · Model · Headline · Computer · Size, with search and a Harness filter, and the agent-connections figures |
+| **Starting kit** | *What every agent reads before it does anything.* | **Brief** (Edit) · **Documents** (Add) · **Knowledge** (Add a domain), **one bar** — *"The starting kit uses 3% of your agent's memory"* — with the **Reading budget** picker beside it; the Documents row opens the list of documents, each with its **Always read / When needed / Hidden** picker, open, edit and delete | The documents table stays open — Document · Source · At start · Tokens · Updated — with every add door and **Suggest a reading plan** |
+| **History** *(Pro)* | *The latest note of each work-stream, on each computer, in one table.* | — | When · Work-stream · Harness · Model · Headline · Computer · Size, with search (and a Harness filter once more than one harness has saved), and the agent-connections figures |
 | **Budget** *(Pro)* | *How much of the agent's window the starting kit takes.* | — | The window meter, the Window, Reading budget and harness-share pickers, a per-layer table, and **What an agent receives, in full ›** |
 | **Computers** *(Pro)* | *Which computers hold this project, and how each part reaches them.* | — | Every computer that saved here, this project's folder, files not sent yet, and the [three travel routes](#what-travels-between-your-computers-and-how) |
 
-**The status words are a closed list** — the same five everywhere the page names a state, each a
-shape, a word and a tone, never colour alone:
+**The status chips are a closed list** — every status chip on the page is one of these, each a
+shape, a word and a tone, never colour alone. (A table cell or a setup step in the reader says its
+own check word instead — *yes*, *needs a fix*, *can't check here*, *done*, *to do*, *not checked
+yet* — described where it appears.)
 
 | Status | Means |
 |---|---|
 | **Ready** | Nothing to do |
-| **Needs you** | One step from you — the row's button is that step |
-| **Not connected** | Not set up on this computer |
+| **Needs you** | One step from you — the row's button is that step, or the notice under the rows holds it |
+| **Not connected** · **Off** | Not set up on this computer |
 | **Unknown** | The Curator could not check it here |
 | **Working** | A check is running |
+| **Failed** | Something did not finish; the notice beside it says why |
 
 **Most of the page is read-only.** Agents write the notes (handoffs) and the journal over MCP; the
 app shows them. Yours to change here: the **brief**, the **documents** and their start state, the
 **domains** a project draws on, and — from the Agents tab — the setup of each agent. A note can be
 deleted ([Deleting a handoff](#deleting-a-handoff)); it cannot be edited.
 
-**The sidebar** lists your projects under **+ New project** (which opens Domains, where projects
-are created — [§10](#projects-inside-a-domain)). Each row is the domain's identity dot, the
+**The sidebar** lists your projects under **+ New project**, which opens the project form in
+Domains, scrolled into view with the cursor in its name field — on the open project's domain, or
+the first one you can write to ([§10](#projects-inside-a-domain)). With no domain at all it says
+*"Create a domain first"* and opens the New domain form instead. With no project yet the page says
+*"No projects yet. + New project adds one to a domain."* Each row is the domain's identity dot, the
 project's name, *"‹agent› · ‹age›"* and the headline of its newest note. With Pro on a row also
 counts its work-streams, and a **Filter projects…** field sits at the top. The screen opens on the
 project written to most recently, and every age on it keeps moving while you watch.
@@ -1689,22 +1695,34 @@ project written to most recently, and every age on it keeps moving while you wat
 
 *New in v4.3.0.* Connecting an
 agent used to be two places — Settings › MCP bridge for this computer, the Context page's step 5
-for the project. It is one flow now, started from a project, in the reader on the right:
+for the project. It is one flow now, started from a project, in the reader on the right. **The
+Curator sets it up for you where it can; otherwise it shows exactly what to paste.**
 
 | Step | What happens |
 |---|---|
-| **1 · Pick the agent** | *"Which agent do you use?"* — one row per agent harness The Curator knows (Claude Code, Cursor, Codex, Antigravity…), each with its status here, plus a way to name another |
-| **2 · Connect it on this computer** | The Curator's MCP entry in the file that agent reads: **Install for me** where it can write it (with the preview of exactly what changes and a backup of the original — [§13](#connecting-your-tools-install-for-me-v3850)), or the entry to copy and paste. Once per computer, for every project |
-| **3 · Point it at this project** | The project part: the two skills, the agent instructions pasted into the file it reads, and its first save from this computer |
+| **1 · Pick the agent** | *"Which agent do you use?"* — one row per agent harness The Curator knows (Claude Code, Cursor, Codex, Antigravity…), each with its status here, plus a way to name another. Picking one adds nothing yet: **Back** leaves the project's list as it was |
+| **2 · Connect it on this computer** | Under **On this computer**: The Curator's MCP entry in the file that agent reads. **Set it up for me** (**Update it for me** when an older entry is there) where The Curator can write it — with the preview of exactly what changes and a backup of the original ([§13](#connecting-your-tools-install-for-me-v3850)) — or, where it can't, *"Paste this into them:"* with the setup text and **Copy the setup text**. The agent's skills belong here too. Once per computer, for every project |
+| **3 · Point it at this project** | Under **For this project**: the agent instructions pasted into the file it reads, and its first save |
 
-Each part shows its outcome where you pressed. **Pick another agent** goes back to step 1. Settings
-› MCP bridge keeps its detail and now opens with a notice — *"Connect agents from a project now."* —
-whose **Open Projects** button brings you here.
+The step header moves on as the readings do. The agent joins this project's list only when you go
+ahead — **Set it up for me**, **Copy the setup text**, or *"Add ‹agent› to this project"*. Each part
+shows its outcome where you pressed; when every part is done, a notice says *"‹agent› is set up for
+this project."* — open it and say *"save where we are"*. **Done** closes the flow; **Pick another
+agent** goes back to step 1.
+
+**Every "connect your agent" door leads here**: the header's **+ Connect an agent**, the Agents
+tab's **+ Connect an agent** (in Pro, every pick from **+ Add an agent harness** opens this flow at
+that agent), the checklist's **Connect**, the [Getting started](#5-first-run--the-getting-started-panel)
+panel's *Connect your agent*, the card Domains shows after you create a project, and the notice at
+the top of Settings › MCP bridge — *"Connect agents from a project now."* — whose button is
+**Connect an agent**. Settings › MCP bridge keeps its machine-wide detail, where the same install
+is **Install for me**.
 
 **Simple and Pro** ([§7c](#7c-simple-and-pro)) are two layouts of the same data. A warning, a cost,
 a refusal, a confirmation and the result of something you pressed are on screen in both; every task
-on this page — connect an agent, fix one, add a document, edit the brief, add a domain, sync, read a
-note — can be finished with Pro off.
+on this page — connect an agent, fix one, add a document, choose what an agent reads at the start,
+set the reading budget, edit the brief, add a domain, sync, read or delete a note — can be finished
+with Pro off.
 
 ### How to choose the right context
 
@@ -1730,11 +1748,12 @@ The words on disk and in the MCP tools did not change (`read-first`, `on-request
 
 **A short recipe, worked in curator-like numbers:**
 
-1. **Mark two or three documents Always read.** Not twelve — the marked set is what every session
+1. **Mark two or three documents Always read** — Starting kit › **Documents** opens the list, and
+   each document's picker says **Always read**, **When needed** or **Hidden**. Not twelve — the marked set is what every session
    pays for, and two or three is a reading plan; a dozen is the old behaviour with extra steps.
-2. **Pick Standard (16k tokens)** as the reading budget (Pro's **Budget** tab), unless you already
-   know you need more or less. With Pro off the budget stays at what it is, and a budget that is not
-   the default is said in words under the Starting kit's bar.
+2. **Pick Standard (16k tokens)** as the reading budget — the **Reading budget** picker beside the
+   Starting kit's bar, in both layouts (Pro's **Budget** tab has it too) — unless you already know
+   you need more or less. A budget that is not the default is said in words under the bar.
 3. **Read the bar.** Say your window is 1M tokens (Claude in Claude Code). The Curator's part —
    brief ≈1.2k, handoff ≈2.1k, journal ≈0.4k, index ≈0.3k, two always-read documents ≈12k — is a
    session start of **≈16k tokens, about 1.6% of the window**, and the Starting kit says *"The
@@ -1748,15 +1767,25 @@ few journal lines, the list of documents, and the text of the documents marked *
 to a **reading budget**. *(Step ④ "Session start" from v3.67.0 to v4.2.x; since v4.3.0 the
 **Starting kit** tab says it in one bar and Pro's **Budget** tab holds the instrument.)*
 
-**With Pro off — one bar.** Under the Starting kit's three rows:
+**On the Starting kit — one bar, in both layouts.** Under the Starting kit's three rows:
 
 > **The starting kit uses 3% of your agent's memory** — *plenty of room left*
 
-The qualifier is plain words, from the share of the window: under 10% *plenty of room left*, under
-30% *room left*, under 60% *a large share*, above that *most of the room*. A setting you changed in
-Pro (a window, a reading budget) is stated under the bar in words, so the bar never means something
-you cannot see. If the measurement fails, a notice says *"What an agent receives could not be
-measured."* with the reason.
+with the **Reading budget** picker beside it (the same setting Pro's Budget tab changes). The
+qualifier is plain words, from the share of the window: under 10% *plenty of room left*, under
+30% *room left*, under 60% *a large share*, above that *most of the room*. When you have set your
+harness's share (Pro), the qualifier counts it: *"With your agent app's own share (≈50k, your
+estimate) 34% is in use — a large share."* A setting you changed in Pro (a window, a harness share)
+is stated under the bar in words, so the bar never means something you cannot see.
+
+**When it does not fit**, a notice above the bar says the meter's own sentence — *"Over the window
+by ≈7.4k tokens at the start of a session."* — with *"It does not fit: choose a smaller reading
+budget, or fewer documents to always read."*, in Simple and in Pro alike (it is worked out from
+the same figures as the meter, your harness's share included). **The measurement's own notes** —
+later pages that could not be read, a reading budget that could not be read, a bounded measurement
+— are one notice on the tab, *"A note on this measurement."* (or *"Notes on this measurement."*),
+with their words unchanged. If the measurement fails, a notice says *"What an agent receives could
+not be measured."* with the reason.
 
 **With Pro on — the Budget tab.**
 
@@ -1791,8 +1820,8 @@ one line.
 **Window and your harness's share** are set **per computer** (in the app's config file), so the app
 and the menu bar widget always agree:
 
-- **Window** — 200K, 400K, 1M, or a custom size — the context window of the model you actually
-  run. Until you choose one on this computer the picker reads **"200K · default"**.
+- **Window** — 200k, 400k, 1M, or a custom size — the context window of the model you actually
+  run. Until you choose one on this computer the picker reads **"200k · default"**.
 - **Your harness's share** — what your agent harness loads for itself: its own system prompt, tool
   definitions, MCP tool lists, instruction files and skills. **Not set** by default, or **Light
   ≈20k**, **Typical ≈50k** (Claude Code, Antigravity or Codex with an instruction file and 2–3 MCP
@@ -1860,7 +1889,10 @@ the reader)*. A card headed **Where the work stands** — *"The note the last ag
 agent you open reads this first."* — shows the handoff's headline as its title and its sections
 (*Where things stand*, *Next steps*, …) as they are in the file, rendered as Markdown. Under it, a
 footer: **Saved · ‹agent› · ‹computer› · ‹age›**, **Open the full note ›** (the [reader](#reading-a-handoff),
-with every chip and warning) and **Delete…** ([Deleting a handoff](#deleting-a-handoff)).
+with every chip and warning) and **Delete ‹agent›'s notes…** ([Deleting a handoff](#deleting-a-handoff)).
+The card always shows the **newest** note: when a save under a new work-stream, another computer's
+save after a sync, or a second agent's first save becomes the newest, the card reads it and shows
+it by itself; a note open in the reader is never swapped under you.
 
 **Copy "continue" prompt** puts one short instruction on your clipboard, filled in for this
 project:
@@ -1874,19 +1906,21 @@ Paste it into any connected agent — a new conversation, another harness, anoth
 **Earlier notes** lists the next few handoffs, one row each (headline, then *agent · computer ·
 age*); a row opens that note in the reader. Pro adds, under the note, a small table of its facts —
 work-stream, harness, model, computer, size and the file's path — and **This work-stream's
-journal** (When · Harness · Model · Headline).
+journal** (When · Harness · Model · Headline · Notes, the last saying what a save normalised,
+replaced or dropped).
 
-**Until the first save, Now is a checklist** — the only numbered list on the page:
+**Until the first save, Now is a checklist** — *"Three steps, then your agent remembers"*, the only
+numbered list on the page:
 
 | # | Step | Its button |
 |---|---|---|
 | ✓ | **Create the project** | — (done: you are looking at it) |
-| 2 | **Connect an agent** — *"Pick Claude Code, Cursor, Codex… The Curator sets it up and shows what it changed."* | **Connect** — the [connect flow](#connect-an-agent--one-flow) |
-| 3 | **Tell it about this project** — *"One paste into your project's instruction file."* | **Copy agent instructions** |
-| 4 | **Open your agent and say "save where we are"** — *"The first note appears here."* | — |
+| 1 | **Connect an agent** — *"Pick Claude Code, Cursor, Codex… The Curator sets it up for you where it can; otherwise it shows exactly what to paste."* | **Connect** — the [connect flow](#connect-an-agent--one-flow) |
+| 2 | **Tell it about this project** — *"One paste into your project's instruction file."* | **Copy agent instructions** |
+| 3 | **Open your agent and say "save where we are"** — *"The first note appears here."* | — |
 
-A step is ticked only from what is really on disk: step 2 when an agent is connected on this
-computer, step 3 when an instruction file carries the block. The checklist leaves by itself when the
+A step is ticked only from what is really on disk: step 1 when an agent is connected on this
+computer, step 2 when an instruction file carries the block. The checklist leaves by itself when the
 first note arrives.
 
 **Above the note, the notices** — every warning about the last save, never folded; see [The notices
@@ -1906,12 +1940,17 @@ Three rows and one bar ([the bar is above](#session-start-and-the-context-window
 | Row | Its line | Its button |
 |---|---|---|
 | **Brief** | *"Your standing instructions for every agent · 3,038 words"*, or *"Not written yet — your standing instructions for every agent."* | **Edit** — the brief editor ([Editing the standing brief](#editing-the-standing-brief)) |
-| **Documents** | *"9 documents · 2 always read, 7 when needed"* (and *N hidden* when there are any), or *"No documents yet — add the ones every agent should know."* | **Add** — the add doors below |
+| **Documents** | *"9 documents · 2 always read, 7 when needed"* (and *N hidden* when there are any), or *"No documents yet — add the ones every agent should know."* Press the row to open the list | **Add** — the add doors below |
 | **Knowledge** | The domains this project draws on, with their identity dots and pages | **Add a domain** — [Knowledge](#knowledge--which-domains-a-project-draws-on) |
 
-A read-only Shared Brain mirror shows the rows without their buttons. Pro shows the documents as a
-table — **Document · Source · At start · Tokens · Updated**, the **At start** cell a picker of
-**Always read / When needed / Hidden** — with the add doors and **Suggest a reading plan** under it.
+A read-only Shared Brain mirror shows the rows without their buttons. **Pressing the Documents
+row opens the documents as a table, in both layouts** — **Document · Source · At start · Tokens ·
+Updated**, the **At start** cell a picker of **Always read / When needed / Hidden**, and each row's
+own edit and delete buttons (with the same confirms as before) — with the add doors under it; a
+document's row opens it in the reader. Pro keeps the table open and adds **Suggest a reading
+plan**. While a reading-plan suggestion is waiting for **Apply**
+or **Dismiss**, its own table — with the suggested start states — stands in place of this one
+until you answer it.
 
 ###### Documents — what the project tells an agent
 
@@ -1963,7 +2002,7 @@ brief, under **"Read before you…"**: one line per kind of work, naming the doc
 **Memory is where the last session stopped, plus your standing instructions — the brief, the
 Handoffs and the Journal.** On the Projects page they live in two tabs: the **Now** tab holds the
 latest handoff (the note) and the earlier ones, the **Starting kit** holds the brief, and Pro's
-**History** tab lists every saved note. *State supersedes*: every save replaces the one before
+**History** tab lists the latest note of each work-stream, on each computer. *State supersedes*: every save replaces the one before
 it rather than being merged into it, because a blocker you fixed has to be able to stop being
 true, and a store that only added to itself could never say so.
 
@@ -2353,11 +2392,14 @@ own reach because a project points somewhere else; the footer says so plainly ra
 you, because switching domains would unpin the project. → [§9, Chat with your brain](#9-chat-with-your-brain)
 for the marked chips and what they mean.
 
-#### History — every saved note *(Pro)*
+<a id="history--every-saved-note-pro"></a>
+
+#### History — the latest note of each work-stream *(Pro)*
 
 *(Until v4.2.x this was the **Handoffs** table inside step ② Memory. Since v4.3.0 the latest note
-is on the **Now** tab, the next few are **Earlier notes**, and Pro's **History** tab lists them
-all.)*
+is on the **Now** tab, the next few are **Earlier notes**, and Pro's **History** tab lists the
+latest note of each work-stream, on each computer. Every single save is a line in that note's
+journal, not a row here.)*
 
 **One row per saved note — one per work-stream per computer**, the store's own unit (a save
 replaces the note before it in the same work-stream on the same computer, so every row is the
@@ -2373,32 +2415,45 @@ agent's own save time wherever there is one.
 | **Headline** | That save's own one-line headline — *not* the project's, so a fortnight-old row shows what it was doing a fortnight ago |
 | **Computer** | The computer that saved it, by name |
 | **Size** | The note's size, against nothing — a note over its budget is trimmed and the trim is noted in the note itself, never refused |
-| **Delete** | **Delete…** — the whole work-stream ([Deleting a handoff](#deleting-a-handoff)). Absent on a Shared Brain mirror |
+| **Delete** | **Delete ‹agent›'s notes…** — the whole work-stream ([Deleting a handoff](#deleting-a-handoff)). Absent on a Shared Brain mirror |
 
-**Search notes…** filters by any of those words; the **Harness** picker narrows to one agent.
-Sort by any column with a sortable head. **Press a row to open that note** in the
+**Search notes…** filters by any of those words; once more than one harness has saved, a
+**Harness** picker narrows to one agent (with one, the toolbar just says *"1 harness"*).
+Sort by any column with a sortable head; the table opens newest first. **Press a row to open that note** in the
 [reader](#reading-a-handoff). Above the table, a small **Agent connections** table says, in plain
 words, how many agents connected in the last 7 days, how many read this project at the start and how
 many saved before stopping, and **Saves by harness** for the same days.
 
 #### Deleting a handoff
 
-*New in v3.75.0.* **Delete…** sits in the footer of the note on the **Now** tab, and on every row of
-Pro's **History** table. It deletes the **whole work-stream** the note belongs to — every machine's saved copy of it, each with its Journal and
-any kept previous handoff — not just the row you pressed. Nothing else is touched: the standing
-brief, your other scopes, the Documents and the wiki stay as they are.
+*New in v3.75.0; reworded in v4.3.0.* The press says whose notes go — **Delete Claude Code's
+notes…** (or *Delete the notes saved as "main"…* when no agent is named) — and sits in the footer
+of the note on the **Now** tab, and on every row of Pro's **History** table. It deletes the **whole
+work-stream** the note belongs to — every machine's saved copy of it, each with its Journal and any
+kept previous handoff — not just the row you pressed. Nothing else is touched: the standing brief,
+your other work-streams, the Documents, the wiki and the agent's connection to The Curator stay as
+they are.
 
-1. Press **Delete…**. A card opens: *"Delete handoff `main`?"*
-2. The card reads the scope fresh and lists **every machine's copy** with its newest headline and
-   how long ago it was saved, marking the one from **this machine**. When any copy was saved on
+1. Press it. A card opens **at the press** — under the note on Now, under the table on History —
+   and scrolls into view: *"Delete Claude Code's notes on this project?"*, with one line, *"Its
+   latest note and its journal go to The Curator's trash, from every computer that saved them. Its
+   connection to The Curator is not touched."*
+2. The card reads the work-stream fresh and lists **every machine's copy** with its newest headline
+   and how long ago it was saved, marking the one from **this machine**. When any copy was saved on
    another computer it says so plainly: *"Sync will remove it on your other computers too."*
 3. It says where the folder goes — The Curator's trash, `<user data>/.curator-trash/scopes/` —
    and how to bring it back.
-4. Type the scope's name exactly. **Delete handoff** stays disabled until it matches; **Keep it**
-   closes the card.
+4. It shows the name the notes are saved under as text — *"These notes are saved under the name
+   `main`. Type it to confirm:"* — and **Delete these notes** stays disabled until what you type
+   matches exactly; **Keep it** closes the card, and the keyboard goes back to the button you
+   pressed.
 
-When it is done, the card is replaced by a line saying what went and the exact folder it now lives
-in; the page and the project list refresh on their own.
+When it is done, the card is replaced by a line saying what went — *"Deleted the notes saved as
+"main" — 2 saved copies (…). They are in The Curator's trash: to restore them, open Settings ›
+Trash and press Restore."* — and the page, the project list and the setup check are read again, so
+every count (sidebar, header, tiles, Agents, History) agrees. **Whether the agent stays on the
+Agents tab:** an agent The Curator knew only from its saves leaves the list with them; one that is
+set up on this computer, or that you added, stays, with its setup state.
 
 **To restore it:** open **Settings → [Trash](#trash)** and press **Restore** on its row (v3.76.0).
 If a handoff of that name has been saved since, the button offers `<name>-restored` instead — it
@@ -2426,7 +2481,7 @@ still looking at.
 |---|---|
 | **The path line** | `state/<project>/<scope>/<machine>/current.md` — the real file, so you can find it in Obsidian or in your synced repository |
 | **The title** | The handoff's own first line. A handoff with no headline is titled after its scope |
-| **The chips** | A `handoff` type badge, then `handoff: <slug>` (v3.65.1 — was `work-stream: <slug>`; the store field itself is `scope`, [the vocabulary table](#the-word-on-screen-and-the-word-on-disk) above), `machine: <name>`, and — only on positive evidence — **this machine** or **synced from another machine**. A handoff that hit the read cap, or that had protocol-shaped text neutralised on read, says so in a chip too |
+| **The chips** | In Simple, plain words: the agent that saved it and *saved on this computer* or *saved on ‹computer›*. In Pro, the store's names: a `handoff` type badge, then `handoff: <slug>` (v3.65.1 — was `work-stream: <slug>`; the store field itself is `scope`, [the vocabulary table](#the-word-on-screen-and-the-word-on-disk) above), `machine: <name>`, and — only on positive evidence — **this machine** or **synced from another machine**. A handoff that hit the read cap, or that had protocol-shaped text neutralised on read, says so in a chip too |
 | **The reading** | *"Saved 5 hr ago · Claude Code · claude-fable-5-1 · updates live"* — the **same** figure the Now tab's footer shows, from the same clock, so the two can never name different times for one save. An **`incomplete`** or **`summary shortened`** badge sits on that line when the save carried one, not under it |
 | **The notes** | The truncation and sanitisation warnings, in full and never folded |
 | **The body** | The handoff, rendered as Markdown |
@@ -2436,9 +2491,8 @@ goes back to what you pressed, so the keyboard is never left stranded in a panel
 leave. It also closes, as every reader does, the moment you click anything in the rail.
 
 A handoff has **no raw-source bar** — it is not a wiki page and there is no ingested document
-behind it — and nothing ever links to one, so the **BACKLINKS** heading the reader always draws
-reads *"BACKLINKS · 0"* with *"No other page links here yet"* under it. That is the reader's own
-furniture rather than a claim about your handoff; it is on the list to hide for this kind of page.
+behind it — and, since v4.3.0, no empty **BACKLINKS** block either: nothing ever links to a
+handoff, so the reader leaves that heading out for this kind of page.
 If a work-stream is listed but its handoff cannot be read on this machine, the reader **says so in
 words** rather than opening an empty page — a blank panel would read as *"this handoff is empty"*,
 which is a different claim.
@@ -2463,7 +2517,7 @@ mirror shows the Brief row without **Edit**, because the write would only be ref
 
 The editor is the **full width of the column** and opens at 320px tall — the four template headings
 alone are close to twenty lines, so a shorter field meant dragging it before you could start. A
-live line under it reads **modified · N words · N bytes of 32768** and updates as you type; over
+live line under it reads **modified · N words · N of 32,768 bytes** and updates as you type; over
 the cap, **Save is disabled** and a **Too long to save** warning appears beside the figure rather
 than waiting for a refusal you could have seen coming. **Preview** swaps the field for the rendered
 markdown and back, never side by side, and your draft is kept byte for byte across the toggle.
@@ -2481,9 +2535,11 @@ character count suggests. The counter shows both that figure and a **word** coun
 answer different questions: bytes answer *will this save?*, words answer *is this a brief or a
 novel?*
 
-> **Saving replaces the whole document.** The brief is not merged with what was there, so send the
-> complete brief rather than an addition — the same rule a handoff save follows, and for the same
-> reason. A brief saved here is stamped as written by a **human**, which is what tells a later
+> **Saving replaces the whole brief** — *"keep everything you want in it, not just what is new"*,
+> as the editor says. The brief is not merged with what was there — the same rule a handoff save
+> follows, and for the same reason. After a save the Starting kit says *"Brief saved."* — *"Every
+> agent reads it at the start of its next session."* A brief longer than an agent is handed at the
+> start says so in the reader, where the cut falls. A brief saved here is stamped as written by a **human**, which is what tells a later
 > agent that the directives in it are yours rather than an earlier session's notes. Editing
 > `state/<project>/project.md` in Obsidian or any text editor still works; it is the same file.
 
@@ -2673,7 +2729,7 @@ Chat and Settings follow in later releases, so for a while the two generations s
 
 | Part | What it looks like | The rule |
 |---|---|---|
-| **Figure** | Every count, size, token estimate, age and price | One formatter: a kilobyte is **1,024 bytes** everywhere, "3,527" with a separator, ages from one ladder (*"27 min ago"*, *"2 weeks ago"*…) |
+| **Figure** | Every count, size, token estimate, age and price | One formatter: a kilobyte is **1,024 bytes** everywhere, "3,527" with a separator, ages from one ladder (*"27 min ago"*, *"2 weeks ago"*…); a token estimate under about a thousand is said as itself (*≈30*, *≈580*, never *≈0.1k*), and a window as *200k* |
 | **Status chip** | A shape, a word and a tone | A closed list: **Ready** (green) · **Needs you** (amber) · **Working** · **Not connected** / **Off** (grey, hollow) · **Unknown** (grey, dashed) · **Failed** (red). Never colour alone |
 | **Notice** | A title, one line, at most two buttons, and **Why?** | Three tones — information, attention, error. The title is at most twelve words |
 | **Row** | Identity dot · title · one line · one status · at most one action · a chevron if it opens | The whole row is the button |
@@ -2827,7 +2883,7 @@ Off — the default — every screen gives you **the answer and the next step**.
 
 | | Simple (Pro off) | Pro (Pro on) |
 |---|---|---|
-| **What it is for** | Getting the job done: where the work stands, which agent needs you, what to press | Working with all of it: every save, every check per computer, the token budget |
+| **What it is for** | Getting the job done: where the work stands, which agent needs you, what to press | Working with all of it: every work-stream's note, every check per computer, the token budget |
 | **How it looks** | Short rows, one status each, one sentence per screen | Full tables you can sort and filter, more tabs, data open rather than folded |
 | **What it never lacks** | A warning, a cost, a refusal, a confirmation, the result of what you pressed — and every task can be finished here | — |
 
@@ -2839,10 +2895,14 @@ composes the answer, Pro shows the full table — over one set of data.* What di
    result of a press are in both layouts, with the same meaning (Simple's wording may be shorter).
    An automated test renders the Projects page both ways, tab by tab, and fails if one is missing
    from Simple — and a tab drawn only in Pro may not hold one.
-2. **Every task finishes in Simple.** Connect an agent, fix one, add a document, edit the brief,
-   add a domain, sync, read a note.
-3. **One name per thing.** *Now*, *Agents*, *Starting kit*, *Brief*, *Documents*, *Knowledge* read
-   the same in both. (*Agent* in Simple headings; *Harness* as a column word in Pro tables.)
+2. **Every task finishes in Simple.** Connect an agent, fix one, add a document, choose a
+   document's start state, set the reading budget, edit the brief, add a domain, sync, read or
+   delete a note.
+3. **One name per thing.** *Now*, *Agents*, *Starting kit*, *Brief*, *Documents*, *Knowledge*,
+   *Always read · When needed · Hidden* read the same in both. (*Agent* in Simple headings;
+   *Harness* as a column word in Pro tables.) The pages not rebuilt yet still carry a few older
+   words — the Domains page's **Context** lens and **Memory** filter, and *read first* in Pro's
+   reading-plan helper and in *What an agent receives, in full*.
 4. **No behaviour difference.** A button does the same thing in both layouts.
 5. **A Pro setting you changed is said in Simple.** A reading budget or a window that is not the
    default is stated in words under the Starting kit's bar.
@@ -2871,8 +2931,8 @@ either way and are rebuilt the same way in later releases.
 | **Sidebar** | Your projects | + a filter field and each project's work-stream count |
 | **Now** | The latest note as text, Earlier notes | + the note's facts and its work-stream's journal, as tables |
 | **Agents** | One row per agent, one status | + one table row per agent per computer — Connected · Skills · Instructions · Hooks · Last save · Saves 7 d |
-| **Starting kit** | Brief · Documents · Knowledge, one bar | + the documents table with its **At start** pickers, and the reading-plan helper |
-| **History · Budget · Computers** | One quiet line: *"More in Pro: every save in a table, the token budget, your computers. Turn on Pro ›"* | Three more tabs |
+| **Starting kit** | Brief · Documents · Knowledge, one bar with the **Reading budget** picker; the Documents row opens the documents table with its **At start** pickers | + that table kept open, and the reading-plan helper |
+| **History · Budget · Computers** | One quiet line naming what Pro adds, with **Turn on Pro ›** | Three more tabs |
 
 **If a control this guide describes is not on your screen**, check whether Pro is on. Every
 control that appears only in Pro is marked *(Pro)* where this guide names it.
@@ -4170,6 +4230,12 @@ exists, and creating one is a click away. Six controls:
 | **Copy marker line** | Puts one line on your clipboard — always `domain/project`, `acme/acme` included for a domain's own project — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
 | **Copy agent instructions** | Puts a short **paste-into-your-entry-file block** on your clipboard, with this project's names already filled in. It tells an agent to read your working state when a session opens and to save it as it goes — since v3.76.0, under a handoff named for its own tool, so two tools on one computer do not overwrite each other. It exists because on some harnesses the continuity skill is installed and **never activates** — measured, an agent on Claude Code saved in **0 of 4** headless runs with the skill alone and **3 of 4** with this block in `CLAUDE.md` ([§13b](#making-sure-your-agent-actually-does-it)) |
 
+**After you create a project**, a card under the form says *"Connect your agent"* —
+*"Sets your agent up where it can; otherwise shows exactly what to paste."* — with **Connect an
+agent**, which opens the [connect flow](#connect-an-agent--one-flow) on the new project, and **Open
+in Projects**. *(Until v4.3.0 this card handed out **Copy marker line** and **Copy agent
+instructions** itself; they are steps of the flow now, and every project row above keeps both.)*
+
 **One project on that list cannot be renamed or deleted: the domain's own** — the one named after
 the domain itself, which is where a domain's state lives when you have not made any other project,
 and where it lived before v3.48.0. Its folder **is** the domain's state root, so renaming it would
@@ -4444,7 +4510,7 @@ Everything stays local — the MCP server only sees your wiki folder, and writes
 **Since v4.3.0 the quickest way in is a project: Projects → Connect an agent** — pick the agent, connect it on this
 computer, point it at the project, in one flow ([§7](#connect-an-agent--one-flow)). Settings › MCP bridge keeps
 the whole machine-wide picture and opens with a notice saying so — *"Connect agents from a project now."*,
-with **Open Projects**. Open **Settings → MCP bridge** (its rail line reads *Connect your agent harnesses to My Curator*). Since
+whose **Connect an agent** button opens that flow. Open **Settings → MCP bridge** (its rail line reads *Connect your agent harnesses to My Curator*). Since
 v3.90.0 the page says what each thing is, or what to do, in plain words. Under the title one line says
 what the page is for; then an **OVERVIEW** — **CONNECTED**, **NEEDS ATTENTION**, **TOOLS WORKING**
 (*24 of 24* from the last test, *—* if never tested) and **LAST USED** (when an agent harness last used a
@@ -4477,8 +4543,9 @@ fold: each **Settings file** that exists (plus the one Install for me would crea
 Curator's line*, *no Curator line*, *not there yet* or *not used on this computer* and **Show the
 file** (Mac only); **Remove The Curator from ‹app›** with the red **Remove**; **Put back the original
 settings file** with **Restore original** (only while a backup is valid); and, for Claude Code and
-Antigravity, *Automatic saves: on/off*. The same button, **Install for me**, appears in **Connect an agent** and on an Agents-tab notice
-about an agent harness's connection.
+Antigravity, *Automatic saves: on/off*. The same install is **Set it up for me** (**Update it for me**) in
+**Connect an agent**, and an Agents-tab notice about an agent harness's connection offers **Install
+for me**, which opens this page.
 
 **② Skills** has one row per skill — `my-curator` (how to read and write your knowledge) and
 `curator-continuity` (how to save and resume work between sessions) — with *N of M harnesses up to date*.
@@ -5634,7 +5701,10 @@ a teammate without `my-curator` on their `PATH` would otherwise experience your 
 **Where it is (v4.3.0):** Pro's **History** tab, as a small **Agent connections** table above the
 saved notes — one plain row, *"11 agent connections · 7 read this project at the start · 11 saved
 before stopping · 1 read and did not save"*, and a **Saves by harness** row for the last 7 days.
-Pro's header tile **Saves** counts the same 7 days. *(It was the first row of step ② Memory —
+Pro's header tile **Saves** counts the same 7 days, and reads *not logged* when there is no usage log
+yet, *could not be read* when there is one it cannot open. When a save arrived but no connection
+was logged, the **Agents** tab says so in both layouts — *"An agent saved here, but no connection
+was logged."* *(It was the first row of step ② Memory —
 called **Capture** through v3.69.0, **Agent sessions** through v3.73.x, then **Agent connections** —
 and is no longer on a Simple tab: it is a reading, never a warning.)*
 
@@ -5759,7 +5829,7 @@ tool needs on a computer is set up **on that computer**, once per computer.*
 | Your **source files** (`raw/`: the PDFs and text files you ingested) | Your knowledge folder | **Never synced** — they stay on the computer you ingested on | Copy them yourself if you need them elsewhere | — |
 | **The code**, **`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`**, and **`.curator-project`** | The project folder (a git clone) | ② The project's own git | Commit and `git push` here; `git pull` there (the first time, `git clone`) | *"AGENTS.md in ‹folder› has no Curator instructions…"* · *"‹folder› has no .curator-project…"* · *".curator-project isn't committed…"* · *"…is committed but not pushed"* |
 | **Where the project folder is** on this computer | This computer's app settings | ③ Nothing — the path differs per computer | **Agents** → **Use** a folder it found, or **Choose another folder** (Pro: **Computers** → **Set the folder** / **Change folder**) | The Agents tab asks *"Where is ‹project›'s code on this Mac?"*; a moved or deleted folder reads *"‹folder› isn't on this Mac."* |
-| **Each tool's MCP entry** | That tool's own config file (for example `~/.claude.json`, `~/.gemini/config/mcp_config.json`) | ③ Nothing | **Projects → Connect an agent** (it uses **Install for me** where it can: Claude Desktop, Cursor, Antigravity on a Mac; Claude Desktop on Windows), or **Copy MCP entry** in that agent's setup steps (Agents → its row), paste, restart the tool | The agent's row is not **Ready**, and step ① of its guide reads *to do*. A to-fix line when the file is empty, not valid JSON or can't be opened, or the entry points at another knowledge folder or a missing file |
+| **Each tool's MCP entry** | That tool's own config file (for example `~/.claude.json`, `~/.gemini/config/mcp_config.json`) | ③ Nothing | **Projects → Connect an agent** (**Set it up for me** where it can: Claude Desktop, Cursor, Antigravity on a Mac; Claude Desktop on Windows), or **Copy MCP entry** in that agent's setup steps (Agents → its row), paste, restart the tool | The agent's row is not **Ready**, and step ① of its guide reads *to do*. A to-fix line when the file is empty, not valid JSON or can't be opened, or the entry points at another knowledge folder or a missing file |
 | **The two skills** (`my-curator`, `curator-continuity`) | The tool's skills folder — or, for the Claude app, your Claude account | ③ Nothing (skills uploaded to your Claude account follow the account) | Download the two `.zip` files from step ② of the tool's setup guide and unzip them into the tool's skills folder (for the Claude app, upload them to your account) | *"‹tool›'s … skill is older than the copy this app carries"* · *"‹tool› has the … skill but not …"* · *can't check here* for skills held by your Claude account |
 | **Hooks** (optional) | The tool's hook settings | ③ Nothing | `my-curator install-hooks <tool>` on each computer (source install) | The row's hooks mark reads *not wired (optional)* — never a to-fix line |
 | **Agent harnesses you added** to Setup, and ones you named yourself | This computer's app settings | ③ Nothing | **+ Add an agent harness** (or **Connect an agent**) again on the other computer | The harness is simply not listed there |
@@ -5799,7 +5869,7 @@ computer** ([§13e](#13e-the-setup-check-in-the-app)).
 | # | Do this | When | How | How to check | Where the app shows it |
 |---|---|---|---|---|---|
 | 1 | **The latest Curator on every computer** | After every release | Settings → **Updates**, beside the version at the foot of the Settings list — it opens **Software update** and runs the check. Then quit and reopen each agent harness, so none keeps an old bridge process running | The version at the foot of Settings reads the same on every computer. **Settings → MCP bridge** warns if a client still has a bridge from before the update | **Computers** tab *(Pro)*: the Curator version each computer last saved with (*not recorded* for a save made before v3.77.0) |
-| 2 | **The Curator's MCP configured in every agent harness** | Once per tool, per computer (again if the app or your knowledge folder moves) | **Projects → Connect an agent** — **Install for me** for Claude Desktop, Cursor, Antigravity (Mac; Claude Desktop on Windows). Other harnesses: **Copy MCP entry** in its setup steps, pasted into that tool's file (below) | Ask the agent to list its `my-curator` tools — all 24 should be there | The agent's row on **Agents** (Pro: the **Connected** column), and step ① of its guide. A notice for a broken file or a stale entry |
+| 2 | **The Curator's MCP configured in every agent harness** | Once per tool, per computer (again if the app or your knowledge folder moves) | **Projects → Connect an agent** — **Set it up for me** for Claude Desktop, Cursor, Antigravity (Mac; Claude Desktop on Windows). Other harnesses: **Copy MCP entry** in its setup steps, pasted into that tool's file (below) | Ask the agent to list its `my-curator` tools — all 24 should be there | The agent's row on **Agents** (Pro: the **Connected** column), and step ① of its guide. A notice for a broken file or a stale entry |
 | 3 | **Both skills, current, in every agent harness** | Once per tool, per computer — and again after every release that changes a skill | Download the two `.zip` files from step ② of the tool's guide, or copy the whole `skills/my-curator/` and `skills/curator-continuity/` folders, to where that tool reads skills (below) | Ask *"what skills are available?"* | The agent's row on **Agents** (Pro: the **Skills** column), and step ② of its guide. A notice when a skill is older than the app's copy, or one of the two is missing; *can't check here* for skills held by your Claude account |
 | 4 | **The Copy agent instructions block at the TOP of both `CLAUDE.md` and `AGENTS.md`** | Once per project repository — and again after a release that changes the block | **Copy agent instructions** for **this** project (the Projects page's **"···"** menu, the connect checklist, or **Copy instructions** in an agent's steps), paste at the very top of each file, then commit and push | The agent's first reply names the rules from your brief | **Agents** (Pro: the **Instructions** column): a notice per file in trouble — *no Curator block*, *names ‹other project›*, *block outdated*, *block past what it reads*. A file opens in the reader, block framed |
 | 5 | **Commit `.curator-project`** | Once per project repository | **Copy marker line**, into a file named `.curator-project` at the repository root; commit and push it. Setup's to-fix line hands you one command that does all three | `git ls-files .curator-project` prints the name | **Agents**: a notice when it is missing, names another project, is not committed or not pushed; Pro's **Computers** tab lists the repository files checked |
@@ -5953,19 +6023,21 @@ Curator tools an agent calls.
 
 **Projects → a project → Agents.** Top to bottom:
 
-1. **A toolbar**: when this computer was last checked, **Check again**, and the menu that adds a
-   harness (**+ Add an agent harness**, [below](#adding-a-harness)).
+1. **A toolbar**: when this computer was last checked, **Check again**, and **+ Connect an agent**
+   (the [connect flow](#connect-an-agent--one-flow)). With Pro on, the toolbar's add menu is
+   **+ Add an agent harness** ([below](#adding-a-harness)), and every pick opens that same flow.
 2. **One row per agent harness**, each with **one status chip** and **at most one action**:
 
    | Status | When | The row's action |
    |---|---|---|
-   | **Needs you** | Something about this harness is wrong (an outdated skill, a stale MCP entry, missing agent instructions…), or it is connected here and has steps left | That fix's first button (for example **Download my-curator.zip** or **Copy instructions**), or **Open its steps** |
+   | **Needs you** | Something about this harness is wrong (an outdated skill, a stale MCP entry, missing agent instructions…), or it is connected here and has steps left | None when the fix is in a notice under the rows — the fix appears once, there; otherwise **Open its steps** |
    | **Not connected** | Not set up on this computer — it saved this project from another computer, or it has steps left and is not connected here | **Set up here** / **Continue setup**, or **Open its steps** |
    | **Ready** | Connected here, reads the agent instructions, and has saved this project from this computer | none |
    | **Working** | The check is running (*"Checking this computer…"*) | — |
 
-   Under the name, one line: the first problem in words when there is one, otherwise how many steps
-   are left and the next one, or when it last saved and from which computer (*"saved 2 hours ago on
+   Under the name, one line: a short reason when there is a problem (*"Its instructions are out of
+   date, so it may skip saving"*, *"Its skills are not installed"*, *"It saved under another name"*
+   — the full sentence is the notice's), otherwise how many steps are left and the next one, or when it last saved and from which computer (*"saved 2 hours ago on
    this Mac"* — a computer is shown by its **name**, never by its folder id such as
    `studio-mac-aa11bb`). A step The Curator **can't check** on this computer is never counted as
    done: when it is the only thing left (Claude Code's skills, held by your Claude account), the row
@@ -5975,10 +6047,14 @@ Curator tools an agent calls.
    is the title, the rest its line, its fix buttons beside it — in Simple and in Pro alike. A warning
    that names no harness (the repository question, a newer handoff waiting on GitHub) is a notice
    too.
-4. **Files not on GitHub yet** — *"N files are only on this computer. Your other computers see the
-   newest note after you sync."* with **Sync now**, when there are any.
-5. **The repository question**, when this project's folder on this computer is not set: *"Where is
-   ‹project›'s code on this Mac?"* with **Use ‹folder›** and **Choose another folder**.
+4. **Files not on GitHub yet** — *"N files are only on this computer."* — *"Counted across all
+   domains. Your other computers see the newest note after you sync."* with **Sync now**, when there
+   are any.
+5. **The project folder, as an optional notice**, when this project's folder on this computer is
+   not set: *"If this project has a folder on this Mac, set it."* — *"…Then Check again can read its
+   instruction files there. A project without code can skip this."* — with **Use this folder** and
+   **Choose another folder** when The Curator found one likely folder (it names it: *"Found: …"*),
+   **Choose a folder** when it found several, or **Set the folder**.
 
 With **no agent yet**, the tab is one sentence — *"No agent on this project yet. An agent here is
 the app your agent runs in — Claude Code, Codex, Cursor, Antigravity…"* — and **Connect an agent**.
@@ -6013,8 +6089,8 @@ With Pro on, the rows become **one table** — one row per harness **per compute
 | **Last save** · **Saves 7 d** | When it last saved this project, and how many times in the last 7 days |
 | **Remove** | Only on a harness you added yourself |
 
-**Filter…** narrows the table; **Per computer / Per harness** groups it; a cell opens that check's
-evidence in the reader. The notices are the same ones Simple shows — Pro adds data, never a warning
+**Filter…** narrows the table; **Per computer / Per harness** groups it; a row opens that
+harness's steps and evidence in the reader — for another computer's row, that computer's. The notices are the same ones Simple shows — Pro adds data, never a warning
 Simple lacks. The repository files and the computers are Pro's
 [Computers tab](#project-context--what-the-screen-shows).
 
@@ -6103,8 +6179,8 @@ sit behind this step's ⓘ, moved here in v3.79.0 because they're words already 
 
 **"checked *N* ago · Check again."** The Agents tab's toolbar carries when it last read your tools'
 files and this repository, with **Check again** beside it (also in the header's **"···"** menu).
-*(The toolbar button was **Re-check** until v4.3.0; a few fix sentences and buttons still say
-**Re-check** — it is the same action.)* **Check again re-reads the config files and
+*(It was **Re-check** until v4.3.0; every button for it, the fix buttons included, now says
+**Check again**.)* **Check again re-reads the config files and
 git state — it never re-reads your repository's file contents beyond `.curator-project` and the
 instruction files, and it changes nothing.** The check also runs itself automatically: when you come
 back to this window (a tab focus or the app becoming visible again) and the last reading is more
@@ -6128,7 +6204,9 @@ anything found — opens in the right-side reader from its row. A harness you ad
 > every platform** (it answered an error off the Mac before v4.1.2).
 
 **"+ Add an agent harness."** *(Called "+ Add a tool", then "+ Add an agent app", before v4.2.0.)*
-On the Agents tab, in both layouts, and as the first step of **Connect an agent**. A listbox with two groups, **Known harnesses** (every harness The Curator can write
+On the Agents tab with Pro on (Simple's toolbar says **+ Connect an agent** instead); a pick opens
+the [connect flow](#connect-an-agent--one-flow) at that harness, whose first step is the same
+choice. A listbox with two groups, **Known harnesses** (every harness The Curator can write
 an MCP entry for, including DeepSeek Harness, that is not already a row) and **Other**, whose last
 entry is **Another harness…**. Beside it, the gloss: *"An agent harness is the app your agent runs
 in — Claude Code, Codex, Cursor, Antigravity…"*. The row under the pointer, or the one the arrow
@@ -6162,7 +6240,8 @@ a second time above the guide.
 confirmation, because nothing is uninstalled: removing a harness only stops Setup checking it on
 this computer, and **+ Add an agent harness** brings it straight back. Two kinds of row stay
 regardless of who added them, and the reader says why: a harness that has **saved this project**
-(its saves are this project's record) and a harness whose **MCP settings on this computer already
+(its saves are this project's record — until you [delete those notes](#deleting-a-handoff): one
+known only from its saves then leaves the list with them) and a harness whose **MCP settings on this computer already
 name The Curator** (Setup found it; nobody added it, so removing it here would not match what is
 actually configured).
 
@@ -6217,7 +6296,7 @@ while another already names the bridge, the tool's row stays fine — the empty 
 note in its evidence, not a fault. Only when a bad file is the *one* place the entry could live does
 it turn the row to-fix. The to-fix line names the file by its path and offers **Reveal**, with
 guidance specific to the state — for an empty file, "open the tool once (it may fill the file), then
-Re-check"; for invalid JSON, "fix the syntax, or delete it if it's a leftover, then Re-check"; for a
+Check again"; for invalid JSON, "fix the syntax (or delete it if it is a leftover), then Check again"; for a
 file that can't open, a pointer at macOS's Privacy & Security settings.
 
 **A tool need not be running for its row to read *ok*.** The check only ever reads files already on
